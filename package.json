@@ -1,5 +1,5 @@
 {
-  "name": "@honeypot-finance/usdc-bridge-widget",
+  "name": "@hongming-wang/usdc-bridge-widget",
   "version": "0.1.0",
   "description": "A reusable USDC cross-chain bridge widget powered by Circle CCTP",
   "main": "dist/index.js",
@@ -58,6 +58,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/honeypotfinance/usdc-bridge-widget"
+    "url": "https://github.com/hongming-wang/usdc-bridge-widget"
   }
 }
