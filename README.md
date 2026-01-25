@@ -115,6 +115,7 @@ interface BridgeWidgetTheme {
   borderColor?: string;
   successColor?: string;      // Default: "#22c55e"
   errorColor?: string;        // Default: "#ef4444"
+  hoverColor?: string;        // Default: "rgba(255, 255, 255, 0.05)"
   borderRadius?: number;      // Default: 12
   fontFamily?: string;
 }
@@ -194,18 +195,41 @@ const customChainConfig = {
 The widget exports its internal hooks for advanced usage:
 
 ```tsx
-import { useUSDCBalance, useUSDCAllowance, useBridgeEstimate } from "@honeypot-finance/usdc-bridge-widget";
+import {
+  useUSDCBalance,
+  useAllUSDCBalances,
+  useUSDCAllowance,
+  useBridge,
+  useBridgeQuote,
+} from "@honeypot-finance/usdc-bridge-widget";
 
 function CustomComponent() {
   const chainConfig = { chain: mainnet, usdcAddress: "0x..." };
 
+  // Balance hooks
   const { balance, balanceFormatted } = useUSDCBalance(chainConfig);
+  const { balances, isLoading } = useAllUSDCBalances([chainConfig]);
+
+  // Allowance hook
   const { needsApproval, approve, isApproving } = useUSDCAllowance(chainConfig);
-  const { estimate, isLoading } = useBridgeEstimate(1, 8453, "100");
+
+  // Bridge execution hook
+  const { bridge, state, reset } = useBridge();
+  // state.status: "idle" | "loading" | "approving" | "burning" | "fetching-attestation" | "minting" | "success" | "error"
+
+  // Quote hook (returns static CCTP estimates)
+  const { quote, isLoading: quoteLoading } = useBridgeQuote(1, 8453, "100");
 
   // Build your own UI
 }
 ```
+
+### Deprecated Hooks
+
+The following hooks are deprecated and will be removed in a future version:
+
+- `useBridgeEstimate` - Use `useBridgeQuote` instead
+- `useFormatNumber` - Use the `formatNumber` utility function directly
 
 ## Supported Chains
 
@@ -223,7 +247,7 @@ The widget includes pre-configured USDC and TokenMessenger addresses for all CCT
 | Unichain | 130 |
 | Sonic | 146 |
 | World Chain | 480 |
-| Monad | 143 |
+| Monad | 10200 |
 | Sei | 1329 |
 | XDC | 50 |
 | HyperEVM | 999 |

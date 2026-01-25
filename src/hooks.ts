@@ -2,13 +2,15 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   useAccount,
   useReadContract,
+  useReadContracts,
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { formatUnits, parseUnits, erc20Abi } from "viem";
 import type { BridgeChainConfig, BridgeEstimate } from "./types";
-
-const USDC_DECIMALS = 6;
+import { USDC_DECIMALS } from "./constants";
+import { formatNumber } from "./utils";
+import { getBridgeChain } from "./useBridge";
 
 /**
  * Hook to get USDC balance for a specific chain
@@ -16,7 +18,11 @@ const USDC_DECIMALS = 6;
 export function useUSDCBalance(chainConfig: BridgeChainConfig | undefined) {
   const { address } = useAccount();
 
-  const { data: balance, isLoading, refetch } = useReadContract({
+  const {
+    data: balance,
+    isLoading,
+    refetch,
+  } = useReadContract({
     address: chainConfig?.usdcAddress,
     abi: erc20Abi,
     functionName: "balanceOf",
@@ -35,6 +41,83 @@ export function useUSDCBalance(chainConfig: BridgeChainConfig | undefined) {
 }
 
 /**
+ * Hook to get USDC balances for all configured chains at once.
+ * Uses multicall for efficient batch fetching.
+ *
+ * @param chainConfigs - Array of chain configurations to fetch balances for
+ * @returns Object with balances mapped by chain ID, loading state, and refetch function
+ *
+ * @example
+ * const { balances, isLoading, refetch } = useAllUSDCBalances(chains);
+ * // balances[1] -> { balance: 1000000n, formatted: "1.00" }
+ */
+export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
+  balances: Record<number, { balance: bigint; formatted: string }>;
+  isLoading: boolean;
+  refetch: () => void;
+} {
+  const { address } = useAccount();
+
+  // Build contract read configs for all chains
+  const contracts = useMemo(() => {
+    if (!address) return [];
+    return chainConfigs
+      .filter((config) => config.usdcAddress)
+      .map((config) => ({
+        address: config.usdcAddress,
+        abi: erc20Abi,
+        functionName: "balanceOf" as const,
+        args: [address] as const,
+        chainId: config.chain.id,
+      }));
+  }, [address, chainConfigs]);
+
+  const {
+    data: results,
+    isLoading,
+    refetch,
+  } = useReadContracts({
+    contracts,
+    query: {
+      enabled: !!address && contracts.length > 0,
+    },
+  });
+
+  // Map results to chain IDs
+  const balances = useMemo(() => {
+    const balanceMap: Record<
+      number,
+      { balance: bigint; formatted: string }
+    > = {};
+
+    if (!results) return balanceMap;
+
+    chainConfigs.forEach((config, index) => {
+      const result = results[index];
+      if (result?.status === "success" && typeof result.result === "bigint") {
+        balanceMap[config.chain.id] = {
+          balance: result.result,
+          formatted: formatUnits(result.result, USDC_DECIMALS),
+        };
+      } else {
+        balanceMap[config.chain.id] = {
+          balance: 0n,
+          formatted: "0",
+        };
+      }
+    });
+
+    return balanceMap;
+  }, [results, chainConfigs]);
+
+  return {
+    balances,
+    isLoading,
+    refetch: refetch as () => void,
+  };
+}
+
+/**
  * Hook to check and handle USDC allowance
  */
 export function useUSDCAllowance(
@@ -42,20 +125,29 @@ export function useUSDCAllowance(
   spenderAddress?: `0x${string}`
 ) {
   const { address } = useAccount();
-  const effectiveSpender = spenderAddress || chainConfig?.tokenMessengerAddress;
+  const effectiveSpender =
+    spenderAddress || chainConfig?.tokenMessengerAddress;
 
-  const { data: allowance, isLoading, refetch } = useReadContract({
+  const {
+    data: allowance,
+    isLoading,
+    refetch,
+  } = useReadContract({
     address: chainConfig?.usdcAddress,
     abi: erc20Abi,
     functionName: "allowance",
-    args: address && effectiveSpender ? [address, effectiveSpender] : undefined,
+    args:
+      address && effectiveSpender ? [address, effectiveSpender] : undefined,
     query: {
       enabled: !!address && !!chainConfig?.usdcAddress && !!effectiveSpender,
     },
   });
 
   const { writeContractAsync, isPending: isApproving } = useWriteContract();
-  const [approvalTxHash, setApprovalTxHash] = useState<`0x${string}` | undefined>();
+  const [approvalTxHash, setApprovalTxHash] = useState<
+    `0x${string}` | undefined
+  >();
+  const [approvalError, setApprovalError] = useState<Error | null>(null);
 
   const { isLoading: isConfirming, isSuccess: isApprovalConfirmed } =
     useWaitForTransactionReceipt({
@@ -63,9 +155,12 @@ export function useUSDCAllowance(
     });
 
   const approve = useCallback(
-    async (amount: string) => {
-      if (!chainConfig?.usdcAddress || !effectiveSpender) return;
+    async (amount: string): Promise<`0x${string}`> => {
+      if (!chainConfig?.usdcAddress || !effectiveSpender) {
+        throw new Error("Missing chain config or spender address");
+      }
 
+      setApprovalError(null);
       try {
         const amountBigInt = parseUnits(amount, USDC_DECIMALS);
         const hash = await writeContractAsync({
@@ -77,8 +172,10 @@ export function useUSDCAllowance(
         setApprovalTxHash(hash);
         return hash;
       } catch (error) {
-        console.error("Approval failed:", error);
-        throw error;
+        const err =
+          error instanceof Error ? error : new Error("Approval failed");
+        setApprovalError(err);
+        throw err;
       }
     },
     [chainConfig?.usdcAddress, effectiveSpender, writeContractAsync]
@@ -92,11 +189,17 @@ export function useUSDCAllowance(
 
   const needsApproval = useCallback(
     (amount: string) => {
-      if (!amount || parseFloat(amount) <= 0 || !allowance) return false;
+      // Early return for invalid inputs
+      if (!amount || !allowance) return false;
+
+      const parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) return false;
+
       try {
         const amountBigInt = parseUnits(amount, USDC_DECIMALS);
         return allowance < amountBigInt;
       } catch {
+        // Parsing failed - amount is invalid, return false
         return false;
       }
     },
@@ -111,41 +214,82 @@ export function useUSDCAllowance(
     approve,
     needsApproval,
     refetch,
+    approvalError,
   };
 }
 
 /**
- * Hook to estimate bridge costs
+ * Hook to estimate bridge costs using Circle Bridge Kit SDK
+ *
+ * @deprecated This hook is deprecated and will be removed in a future version.
+ * Use `useBridgeQuote` from `useBridge.ts` instead for SDK-based estimates.
+ *
+ * Note: kit.estimate() requires an adapter with wallet connection.
+ * For pre-bridge quotes without wallet, we return CCTP standard estimates.
+ *
+ * @example
+ * // Before (deprecated):
+ * const { estimate } = useBridgeEstimate(sourceChainId, destChainId, amount);
+ *
+ * // After (recommended):
+ * import { useBridgeQuote } from './useBridge';
+ * const { quote } = useBridgeQuote(sourceChainId, destChainId, amount);
  */
 export function useBridgeEstimate(
   sourceChainId: number | undefined,
   destChainId: number | undefined,
   amount: string
 ) {
+  // Emit deprecation warning once
+  useEffect(() => {
+    console.warn(
+      "[DEPRECATED] useBridgeEstimate is deprecated and will be removed in a future version. " +
+      "Use useBridgeQuote from './useBridge' instead."
+    );
+  }, []);
+
   const [estimate, setEstimate] = useState<BridgeEstimate | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
   const fetchEstimate = useCallback(async () => {
     if (!amount || parseFloat(amount) <= 0 || !sourceChainId || !destChainId) {
       setEstimate(null);
+      setError(null);
       return;
     }
 
     setIsLoading(true);
+    setError(null);
     try {
-      // Estimate gas fees based on source chain
-      // In production, integrate with Bridge Kit's estimate method
-      const gasFee = sourceChainId === 1 ? "2.50" : "0.10";
-      const bridgeFee = "0.00"; // CCTP has no bridge fee
+      const sourceBridgeChain = getBridgeChain(sourceChainId);
+      const destBridgeChain = getBridgeChain(destChainId);
 
+      // If chains are not supported, return basic estimate
+      if (!sourceBridgeChain || !destBridgeChain) {
+        setEstimate({
+          gasFee: "Estimated by wallet",
+          bridgeFee: "0.00",
+          totalFee: "Gas only",
+          estimatedTime: "~15-20 minutes",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Note: kit.estimate() requires an adapter with wallet connection
+      // For pre-bridge quotes without wallet, we return CCTP standard estimates
+      // CCTP V2 FAST transfers: 1-14 bps fee, SLOW transfers: 0 bps
       setEstimate({
-        gasFee,
-        bridgeFee,
-        totalFee: gasFee,
-        estimatedTime: "~15 minutes",
+        gasFee: "Estimated by wallet",
+        bridgeFee: "0-14 bps (FAST) / 0 (SLOW)",
+        totalFee: "Gas + protocol fee",
+        estimatedTime: "~15-20 minutes",
       });
-    } catch (error) {
-      console.error("Failed to estimate bridge cost:", error);
+    } catch (err) {
+      const error =
+        err instanceof Error ? err : new Error("Failed to estimate bridge cost");
+      setError(error);
       setEstimate(null);
     } finally {
       setIsLoading(false);
@@ -153,28 +297,52 @@ export function useBridgeEstimate(
   }, [sourceChainId, destChainId, amount]);
 
   useEffect(() => {
+    // Track if this effect is still active
+    let isActive = true;
+
     const debounceTimer = setTimeout(() => {
-      fetchEstimate();
+      if (isActive) {
+        fetchEstimate();
+      }
     }, 500);
 
-    return () => clearTimeout(debounceTimer);
+    return () => {
+      isActive = false;
+      clearTimeout(debounceTimer);
+    };
   }, [fetchEstimate]);
 
-  return { estimate, isLoading };
+  return { estimate, isLoading, error };
 }
 
 /**
  * Hook to format numbers for display
+ *
+ * @deprecated This hook is deprecated and will be removed in a future version.
+ * Use the `formatNumber` utility function directly from `utils.ts` instead.
+ * The hook adds unnecessary overhead with useCallback for a pure function.
+ *
+ * @example
+ * // Before (deprecated):
+ * const format = useFormatNumber();
+ * const formatted = format(1234.56, 2);
+ *
+ * // After (recommended):
+ * import { formatNumber } from './utils';
+ * const formatted = formatNumber(1234.56, 2);
  */
 export function useFormatNumber() {
+  // Emit deprecation warning once
+  useEffect(() => {
+    console.warn(
+      "[DEPRECATED] useFormatNumber is deprecated and will be removed in a future version. " +
+      "Use the formatNumber utility function from './utils' directly instead."
+    );
+  }, []);
+
   return useCallback(
     (value: string | number, decimals: number = 2): string => {
-      const num = typeof value === "string" ? parseFloat(value) : value;
-      if (isNaN(num)) return "0";
-      return num.toLocaleString(undefined, {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-      });
+      return formatNumber(value, decimals);
     },
     []
   );

@@ -7,9 +7,9 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     },
     "./styles.css": "./dist/styles.css"
   },
@@ -20,7 +20,14 @@
   "scripts": {
     "build": "tsup src/index.tsx --format cjs,esm --dts --external react --external react-dom --external wagmi --external viem --external @tanstack/react-query",
     "dev": "tsup src/index.tsx --format cjs,esm --dts --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@circle-fin/bridge-kit": "^1.0.0",
+    "@circle-fin/adapter-viem-v2": "^1.3.0"
   },
   "peerDependencies": {
     "@tanstack/react-query": ">=5.0.0",
@@ -30,10 +37,14 @@
     "wagmi": ">=2.0.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.0",
+    "@testing-library/react": "^14.2.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "jsdom": "^24.0.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^1.2.0"
   },
   "keywords": [
     "usdc",

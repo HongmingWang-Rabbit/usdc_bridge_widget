@@ -7,8 +7,6 @@ dist/
 # Claude Code
 .claude/
 
-# Demo app (local testing only)
-demo/
 
 # Environment
 .env

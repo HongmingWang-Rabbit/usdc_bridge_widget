@@ -1,44 +1,90 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef, useId, useMemo } from "react";
 import {
   useAccount,
   useChainId,
   useSwitchChain,
-  useWriteContract,
   useWaitForTransactionReceipt,
   useConnect,
 } from "wagmi";
-import { parseUnits, erc20Abi } from "viem";
 import type {
   BridgeWidgetProps,
   BridgeWidgetTheme,
   BridgeChainConfig,
 } from "./types";
-import {
-  useUSDCBalance,
-  useUSDCAllowance,
-  useFormatNumber,
-} from "./hooks";
-import { DEFAULT_CHAIN_CONFIGS } from "./index";
+import { useUSDCBalance, useUSDCAllowance, useAllUSDCBalances } from "./hooks";
+import { useBridge } from "./useBridge";
+import { DEFAULT_CHAIN_CONFIGS } from "./chains";
+import { USDC_BRAND_COLOR } from "./constants";
+import { formatNumber, getErrorMessage, validateAmountInput, validateChainConfigs } from "./utils";
+import { mergeTheme } from "./theme";
+import { ChevronDownIcon, SwapIcon } from "./icons";
 
-// Default theme
-const defaultTheme: Required<BridgeWidgetTheme> = {
-  primaryColor: "#6366f1",
-  secondaryColor: "#a855f7",
-  backgroundColor: "rgba(15, 15, 25, 0.8)",
-  cardBackgroundColor: "rgba(15, 15, 25, 0.6)",
-  textColor: "#ffffff",
-  mutedTextColor: "rgba(255, 255, 255, 0.54)",
-  borderColor: "rgba(255, 255, 255, 0.06)",
-  successColor: "#22c55e",
-  errorColor: "#ef4444",
-  borderRadius: 12,
-  fontFamily:
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-};
+// Chain icon with fallback
+function ChainIcon({
+  chainConfig,
+  theme,
+  size = 24,
+}: {
+  chainConfig: BridgeChainConfig;
+  theme: Required<BridgeWidgetTheme>;
+  size?: number;
+}) {
+  const [hasError, setHasError] = useState(false);
 
-// Merge theme with defaults
-function mergeTheme(theme?: BridgeWidgetTheme): Required<BridgeWidgetTheme> {
-  return { ...defaultTheme, ...theme };
+  if (!chainConfig.iconUrl || hasError) {
+    return (
+      <div
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          borderRadius: "50%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: `${size * 0.5}px`,
+          fontWeight: "bold",
+          color: theme.textColor,
+          background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
+        }}
+        aria-hidden="true"
+      >
+        {chainConfig.chain.name.charAt(0)}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={chainConfig.iconUrl}
+      alt=""
+      aria-hidden="true"
+      style={{ width: `${size}px`, height: `${size}px`, borderRadius: "50%" }}
+      onError={() => setHasError(true)}
+    />
+  );
+}
+
+// Small loading spinner for balance display
+function BalanceSpinner({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      style={{
+        animation: "cc-balance-spin 1s linear infinite",
+        opacity: 0.6,
+      }}
+      aria-hidden="true"
+    >
+      <style>{`@keyframes cc-balance-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+      <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 // Chain Selector Component
@@ -49,6 +95,10 @@ function ChainSelector({
   onSelect,
   excludeChainId,
   theme,
+  id,
+  balances,
+  isLoadingBalances,
+  disabled,
 }: {
   label: string;
   chains: BridgeChainConfig[];
@@ -56,15 +106,151 @@ function ChainSelector({
   onSelect: (chain: BridgeChainConfig) => void;
   excludeChainId?: number;
   theme: Required<BridgeWidgetTheme>;
+  id: string;
+  balances?: Record<number, { balance: bigint; formatted: string }>;
+  isLoadingBalances?: boolean;
+  disabled?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [typeAhead, setTypeAhead] = useState("");
+  const typeAheadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const availableChains = chains.filter(
     (c) => c.chain.id !== excludeChainId
   );
 
+  // Clear type-ahead timer on unmount
+  useEffect(() => {
+    return () => {
+      if (typeAheadTimeoutRef.current) {
+        clearTimeout(typeAheadTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Handle keyboard navigation on button
+  const handleButtonKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+        buttonRef.current?.focus();
+      } else if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        if (!isOpen) {
+          e.preventDefault();
+          setIsOpen(true);
+          setFocusedIndex(0);
+        }
+      }
+    },
+    [isOpen]
+  );
+
+  // Handle keyboard navigation in listbox with type-ahead search
+  const handleListKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+        setTypeAhead("");
+        buttonRef.current?.focus();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedIndex((prev) =>
+          prev < availableChains.length - 1 ? prev + 1 : 0
+        );
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedIndex((prev) =>
+          prev > 0 ? prev - 1 : availableChains.length - 1
+        );
+      } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        if (focusedIndex >= 0 && focusedIndex < availableChains.length) {
+          onSelect(availableChains[focusedIndex]);
+          setIsOpen(false);
+          setTypeAhead("");
+          buttonRef.current?.focus();
+        }
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        setFocusedIndex(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        setFocusedIndex(availableChains.length - 1);
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Type-ahead search
+        e.preventDefault();
+        const newTypeAhead = typeAhead + e.key.toLowerCase();
+        setTypeAhead(newTypeAhead);
+
+        // Clear previous timeout
+        if (typeAheadTimeoutRef.current) {
+          clearTimeout(typeAheadTimeoutRef.current);
+        }
+
+        // Reset type-ahead after 1 second of inactivity
+        typeAheadTimeoutRef.current = setTimeout(() => {
+          setTypeAhead("");
+        }, 1000);
+
+        // Find matching chain
+        const matchIndex = availableChains.findIndex((chain) =>
+          chain.chain.name.toLowerCase().startsWith(newTypeAhead)
+        );
+        if (matchIndex !== -1) {
+          setFocusedIndex(matchIndex);
+        }
+      }
+    },
+    [availableChains, focusedIndex, onSelect, typeAhead]
+  );
+
+  // Focus the list when opened
+  useEffect(() => {
+    if (isOpen && listRef.current) {
+      listRef.current.focus();
+    }
+  }, [isOpen]);
+
+  // Close on escape key globally when open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsOpen(false);
+        setTypeAhead("");
+        buttonRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleGlobalKeyDown);
+    return () => document.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [isOpen]);
+
+  // Reset type-ahead when dropdown closes
+  useEffect(() => {
+    if (!isOpen) {
+      setTypeAhead("");
+      if (typeAheadTimeoutRef.current) {
+        clearTimeout(typeAheadTimeoutRef.current);
+        typeAheadTimeoutRef.current = null;
+      }
+    }
+  }, [isOpen]);
+
+  const buttonId = `${id}-button`;
+  const listboxId = `${id}-listbox`;
+
+  // Get selected chain balance
+  const selectedBalance = balances?.[selectedChain.chain.id];
+
   return (
     <div style={{ position: "relative", flex: 1 }}>
       <label
+        id={`${id}-label`}
+        htmlFor={buttonId}
         style={{
           display: "block",
           fontSize: "10px",
@@ -78,7 +264,16 @@ function ChainSelector({
         {label}
       </label>
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        ref={buttonRef}
+        id={buttonId}
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        onKeyDown={disabled ? undefined : handleButtonKeyDown}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-labelledby={`${id}-label`}
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-disabled={disabled}
         style={{
           width: "100%",
           display: "flex",
@@ -86,65 +281,57 @@ function ChainSelector({
           justifyContent: "space-between",
           padding: "10px 12px",
           borderRadius: `${theme.borderRadius}px`,
-          background: "rgba(0,0,0,0.3)",
+          background: theme.cardBackgroundColor,
           border: `1px solid ${theme.borderColor}`,
-          cursor: "pointer",
+          cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.6 : 1,
           transition: "all 0.2s",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          {selectedChain.iconUrl ? (
-            <img
-              src={selectedChain.iconUrl}
-              alt={selectedChain.chain.name}
-              style={{ width: "24px", height: "24px", borderRadius: "50%" }}
-            />
-          ) : (
-            <div
+          <ChainIcon chainConfig={selectedChain} theme={theme} />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+            <span
               style={{
-                width: "24px",
-                height: "24px",
-                borderRadius: "50%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "12px",
-                fontWeight: "bold",
+                fontSize: "14px",
+                fontWeight: 500,
                 color: theme.textColor,
-                background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
               }}
             >
-              {selectedChain.chain.name.charAt(0)}
-            </div>
-          )}
-          <span
-            style={{
-              fontSize: "14px",
-              fontWeight: 500,
-              color: theme.textColor,
-            }}
-          >
-            {selectedChain.chain.name}
-          </span>
+              {selectedChain.chain.name}
+            </span>
+            {isLoadingBalances ? (
+              <span
+                style={{
+                  fontSize: "10px",
+                  color: theme.mutedTextColor,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                }}
+              >
+                <BalanceSpinner size={10} /> Loading...
+              </span>
+            ) : selectedBalance ? (
+              <span
+                style={{
+                  fontSize: "10px",
+                  color: theme.mutedTextColor,
+                }}
+              >
+                {formatNumber(selectedBalance.formatted, 2)} USDC
+              </span>
+            ) : null}
+          </div>
         </div>
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke={theme.mutedTextColor}
+        <ChevronDownIcon
+          size={16}
+          color={theme.mutedTextColor}
           style={{
             transition: "transform 0.2s",
             transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
           }}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
+        />
       </button>
 
       {isOpen && (
@@ -156,8 +343,20 @@ function ChainSelector({
               zIndex: 10,
             }}
             onClick={() => setIsOpen(false)}
+            aria-hidden="true"
           />
-          <div
+          <ul
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-labelledby={`${id}-label`}
+            aria-activedescendant={
+              focusedIndex >= 0
+                ? `${id}-option-${availableChains[focusedIndex]?.chain.id}`
+                : undefined
+            }
+            tabIndex={0}
+            onKeyDown={handleListKeyDown}
             style={{
               position: "absolute",
               zIndex: 20,
@@ -165,83 +364,94 @@ function ChainSelector({
               marginTop: "8px",
               borderRadius: `${theme.borderRadius}px`,
               boxShadow: "0 10px 40px rgba(0,0,0,0.3)",
-              background: "rgba(20, 20, 35, 0.98)",
+              background: theme.cardBackgroundColor,
+              backdropFilter: "blur(10px)",
               border: `1px solid ${theme.borderColor}`,
               maxHeight: "300px",
               overflowY: "auto",
               overflowX: "hidden",
+              padding: 0,
+              margin: 0,
+              listStyle: "none",
+              outline: "none",
             }}
           >
-            {availableChains.map((chainConfig) => (
-              <button
-                key={chainConfig.chain.id}
-                onClick={() => {
-                  onSelect(chainConfig);
-                  setIsOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "10px 12px",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  transition: "background 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(255,255,255,0.05)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                }}
-              >
-                {chainConfig.iconUrl ? (
-                  <img
-                    src={chainConfig.iconUrl}
-                    alt={chainConfig.chain.name}
-                    style={{ width: "24px", height: "24px", borderRadius: "50%" }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: "24px",
-                      height: "24px",
-                      borderRadius: "50%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      color: theme.textColor,
-                      background:
-                        chainConfig.chain.id === selectedChain.chain.id
-                          ? `linear-gradient(135deg, ${theme.primaryColor}, ${theme.secondaryColor})`
-                          : "rgba(255,255,255,0.1)",
-                    }}
-                  >
-                    {chainConfig.chain.name.charAt(0)}
-                  </div>
-                )}
-                <span
-                  style={{
-                    fontSize: "14px",
-                    color:
-                      chainConfig.chain.id === selectedChain.chain.id
-                        ? theme.textColor
-                        : theme.mutedTextColor,
-                    fontWeight:
-                      chainConfig.chain.id === selectedChain.chain.id
-                        ? 500
-                        : 400,
+            {availableChains.map((chainConfig, index) => {
+              const chainBalance = balances?.[chainConfig.chain.id];
+              const isFocused = index === focusedIndex;
+              const isSelected = chainConfig.chain.id === selectedChain.chain.id;
+
+              return (
+                <li
+                  key={chainConfig.chain.id}
+                  id={`${id}-option-${chainConfig.chain.id}`}
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => {
+                    onSelect(chainConfig);
+                    setIsOpen(false);
+                    buttonRef.current?.focus();
                   }}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "10px 12px",
+                    background: isFocused ? theme.hoverColor : "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    transition: "background 0.2s",
+                  }}
+                  onMouseEnter={() => setFocusedIndex(index)}
                 >
-                  {chainConfig.chain.name}
-                </span>
-              </button>
-            ))}
-          </div>
+                  <ChainIcon chainConfig={chainConfig} theme={theme} />
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                    <span
+                      style={{
+                        fontSize: "14px",
+                        color: isSelected ? theme.textColor : theme.mutedTextColor,
+                        fontWeight: isSelected ? 500 : 400,
+                      }}
+                    >
+                      {chainConfig.chain.name}
+                    </span>
+                    {isLoadingBalances ? (
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          color: theme.mutedTextColor,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        <BalanceSpinner size={10} />
+                      </span>
+                    ) : chainBalance ? (
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          color: parseFloat(chainBalance.formatted) > 0 ? theme.successColor : theme.mutedTextColor,
+                        }}
+                      >
+                        {formatNumber(chainBalance.formatted, 2)} USDC
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          color: theme.mutedTextColor,
+                        }}
+                      >
+                        0.00 USDC
+                      </span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </>
       )}
     </div>
@@ -252,47 +462,38 @@ function ChainSelector({
 function SwapButton({
   onClick,
   theme,
+  disabled,
 }: {
   onClick: () => void;
   theme: Required<BridgeWidgetTheme>;
+  disabled?: boolean;
 }) {
+  const [isHovered, setIsHovered] = useState(false);
+
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
+      aria-label="Swap source and destination chains"
       style={{
         padding: "8px",
         borderRadius: `${theme.borderRadius}px`,
         background: `${theme.primaryColor}15`,
         border: `1px solid ${theme.primaryColor}40`,
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
         transition: "all 0.2s",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         alignSelf: "flex-end",
         marginBottom: "4px",
+        transform: isHovered && !disabled ? "scale(1.1)" : "scale(1)",
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = "scale(1.1)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = "scale(1)";
-      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      <svg
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke={theme.primaryColor}
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"
-        />
-      </svg>
+      <SwapIcon size={20} color={theme.primaryColor} />
     </button>
   );
 }
@@ -304,14 +505,42 @@ function AmountInput({
   balance,
   onMaxClick,
   theme,
+  id,
+  disabled,
 }: {
   value: string;
   onChange: (value: string) => void;
   balance: string;
   onMaxClick: () => void;
   theme: Required<BridgeWidgetTheme>;
+  id: string;
+  disabled?: boolean;
 }) {
-  const formatNumber = useFormatNumber();
+  const inputId = `${id}-input`;
+  const labelId = `${id}-label`;
+
+  // Handle input change with comprehensive validation
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (disabled) return;
+      const result = validateAmountInput(e.target.value);
+      if (result.isValid) {
+        onChange(result.sanitized);
+      } else if (result.sanitized) {
+        // Use sanitized value (e.g., truncated decimals)
+        onChange(result.sanitized);
+      }
+      // Invalid input is rejected silently
+    },
+    [onChange, disabled]
+  );
+
+  // Prevent 'e' key from being entered
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "e" || e.key === "E" || e.key === "+" || e.key === "-") {
+      e.preventDefault();
+    }
+  }, []);
 
   return (
     <div>
@@ -323,6 +552,8 @@ function AmountInput({
         }}
       >
         <label
+          id={labelId}
+          htmlFor={inputId}
           style={{
             fontSize: "10px",
             color: theme.mutedTextColor,
@@ -333,7 +564,10 @@ function AmountInput({
         >
           Amount
         </label>
-        <span style={{ fontSize: "10px", color: theme.mutedTextColor }}>
+        <span
+          style={{ fontSize: "10px", color: theme.mutedTextColor }}
+          aria-live="polite"
+        >
           Balance:{" "}
           <span style={{ color: theme.textColor }}>
             {formatNumber(balance)} USDC
@@ -346,15 +580,24 @@ function AmountInput({
           alignItems: "center",
           borderRadius: `${theme.borderRadius}px`,
           overflow: "hidden",
-          background: "rgba(0,0,0,0.3)",
+          background: theme.cardBackgroundColor,
           border: `1px solid ${theme.borderColor}`,
+          opacity: disabled ? 0.6 : 1,
         }}
       >
         <input
-          type="number"
+          id={inputId}
+          type="text"
+          inputMode="decimal"
+          pattern="[0-9]*\.?[0-9]*"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
           placeholder="0.00"
+          disabled={disabled}
+          aria-labelledby={labelId}
+          aria-describedby={`${id}-currency`}
+          aria-disabled={disabled}
           style={{
             flex: 1,
             background: "transparent",
@@ -366,6 +609,7 @@ function AmountInput({
             outline: "none",
             minWidth: 0,
             fontFamily: theme.fontFamily,
+            cursor: disabled ? "not-allowed" : "text",
           }}
         />
         <div
@@ -378,6 +622,8 @@ function AmountInput({
         >
           <button
             onClick={onMaxClick}
+            disabled={disabled}
+            aria-label="Set maximum amount"
             style={{
               padding: "4px 8px",
               fontSize: "10px",
@@ -386,22 +632,27 @@ function AmountInput({
               background: `${theme.primaryColor}20`,
               color: theme.primaryColor,
               border: "none",
-              cursor: "pointer",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.5 : 1,
             }}
           >
             MAX
           </button>
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+          <div
+            id={`${id}-currency`}
+            style={{ display: "flex", alignItems: "center", gap: "4px" }}
+          >
             <div
               style={{
                 width: "20px",
                 height: "20px",
                 borderRadius: "50%",
-                background: "#2775ca",
+                background: USDC_BRAND_COLOR,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
               }}
+              aria-hidden="true"
             >
               <span
                 style={{
@@ -445,8 +696,27 @@ export function BridgeWidget({
   const theme = mergeTheme(themeOverrides);
   const { address, isConnected } = useAccount();
   const currentChainId = useChainId();
-  const { switchChainAsync, isPending: isSwitchingChain } = useSwitchChain();
+  const { switchChainAsync } = useSwitchChain();
   const { connect, connectors } = useConnect();
+
+  // Validate chain configs on mount/change
+  const [configError, setConfigError] = useState<string | null>(null);
+  useEffect(() => {
+    const validation = validateChainConfigs(chains);
+    if (!validation.isValid) {
+      const errorMsg = validation.errors.join("; ");
+      console.error("[BridgeWidget] Invalid chain configuration:", errorMsg);
+      setConfigError(errorMsg);
+    } else {
+      setConfigError(null);
+    }
+  }, [chains]);
+
+  // Generate unique IDs for accessibility
+  const baseId = useId();
+  const sourceChainId = `${baseId}-source`;
+  const destChainId = `${baseId}-dest`;
+  const amountId = `${baseId}-amount`;
 
   // Find initial chains
   const getChainConfig = useCallback(
@@ -471,7 +741,8 @@ export function BridgeWidget({
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const [error, setError] = useState<string | null>(null);
 
-  // Hooks
+  // Hooks - fetch balances for all chains
+  const { balances: allBalances, isLoading: isLoadingAllBalances, refetch: refetchAllBalances } = useAllUSDCBalances(chains);
   const { balanceFormatted, refetch: refetchBalance } = useUSDCBalance(
     sourceChainConfig
   );
@@ -479,111 +750,228 @@ export function BridgeWidget({
     sourceChainConfig
   );
 
-  const { isPending: isWriting } = useWriteContract();
+  // Combined refetch for all balances
+  const refetchBalances = useCallback(() => {
+    refetchBalance();
+    refetchAllBalances();
+  }, [refetchBalance, refetchAllBalances]);
+
+  // Bridge hook
+  const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
+
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash: txHash,
   });
+
+  // Bridge operation states
+  const isBridging = bridgeState.status === "loading" ||
+    bridgeState.status === "approving" ||
+    bridgeState.status === "burning" ||
+    bridgeState.status === "fetching-attestation" ||
+    bridgeState.status === "minting";
+
+  // Disable inputs when any operation is pending to prevent race conditions
+  const isOperationPending = isBridging || isConfirming || isApproving;
+
+  // Store callbacks in refs to avoid useEffect dependency issues
+  const onBridgeSuccessRef = useRef(onBridgeSuccess);
+  onBridgeSuccessRef.current = onBridgeSuccess;
+  const onBridgeErrorRef = useRef(onBridgeError);
+  onBridgeErrorRef.current = onBridgeError;
 
   // Check if we need to switch chains
   const needsChainSwitch =
     isConnected && currentChainId !== sourceChainConfig.chain.id;
 
   // Swap chains
-  const handleSwapChains = () => {
-    const temp = sourceChainConfig;
-    setSourceChainConfig(destChainConfig);
-    setDestChainConfig(temp);
-  };
+  const handleSwapChains = useCallback(() => {
+    setSourceChainConfig((prev) => {
+      setDestChainConfig(prev);
+      return destChainConfig;
+    });
+  }, [destChainConfig]);
 
   // Handle max click
-  const handleMaxClick = () => {
+  const handleMaxClick = useCallback(() => {
     setAmount(balanceFormatted);
-  };
+  }, [balanceFormatted]);
 
   // Handle chain switch
-  const handleSwitchChain = async () => {
+  const handleSwitchChain = useCallback(async () => {
     try {
       await switchChainAsync({ chainId: sourceChainConfig.chain.id });
     } catch (err) {
-      console.error("Failed to switch chain:", err);
+      setError(getErrorMessage(err));
     }
-  };
+  }, [switchChainAsync, sourceChainConfig.chain.id]);
 
   // Handle bridge
-  const handleBridge = async () => {
+  const handleBridge = useCallback(async () => {
     if (!address || !amount || parseFloat(amount) <= 0) return;
 
     setError(null);
-    try {
-      if (needsApproval(amount)) {
-        onBridgeStart?.({
-          sourceChainId: sourceChainConfig.chain.id,
-          destChainId: destChainConfig.chain.id,
-          amount,
-        });
-        const approveTx = await approve(amount);
-        setTxHash(approveTx);
-      } else {
-        // This is where Circle Bridge Kit would be integrated
-        // For now, provide guidance
-        setError(
-          "Bridge Kit integration required. Install @circle-fin/bridge-kit"
-        );
-      }
-    } catch (err: any) {
-      const errorMessage = err?.message || "Transaction failed";
-      setError(errorMessage);
-      onBridgeError?.(err);
-    }
-  };
+    resetBridge();
 
-  // Reset on success
-  useEffect(() => {
-    if (isSuccess && txHash) {
-      setAmount("");
-      setTxHash(undefined);
-      refetchBalance();
-      onBridgeSuccess?.({
+    try {
+      // Notify that bridge is starting
+      onBridgeStart?.({
         sourceChainId: sourceChainConfig.chain.id,
         destChainId: destChainConfig.chain.id,
         amount,
-        txHash,
+      });
+
+      if (needsApproval(amount)) {
+        // Store pending bridge info for after approval
+        pendingBridgeRef.current = {
+          amount,
+          sourceChainConfig,
+          destChainConfig,
+        };
+        // First approve, then bridge will be triggered after approval
+        const approveTx = await approve(amount);
+        setTxHash(approveTx);
+      } else {
+        // Already approved, execute bridge directly
+        await executeBridge({
+          sourceChainConfig,
+          destChainConfig,
+          amount,
+        });
+      }
+    } catch (err: unknown) {
+      const errorMessage = getErrorMessage(err);
+      setError(errorMessage);
+      onBridgeErrorRef.current?.(
+        err instanceof Error ? err : new Error(errorMessage)
+      );
+    }
+  }, [
+    address,
+    amount,
+    needsApproval,
+    approve,
+    executeBridge,
+    resetBridge,
+    onBridgeStart,
+    sourceChainConfig,
+    destChainConfig,
+  ]);
+
+  // Store amount in ref for bridge execution after approval
+  const pendingBridgeRef = useRef<{
+    amount: string;
+    sourceChainConfig: BridgeChainConfig;
+    destChainConfig: BridgeChainConfig;
+  } | null>(null);
+
+  // After approval success, execute the bridge
+  useEffect(() => {
+    if (isSuccess && txHash && pendingBridgeRef.current) {
+      const { amount: pendingAmount, sourceChainConfig: pendingSource, destChainConfig: pendingDest } = pendingBridgeRef.current;
+      pendingBridgeRef.current = null;
+      setTxHash(undefined);
+
+      // Execute bridge after approval
+      void executeBridge({
+        sourceChainConfig: pendingSource,
+        destChainConfig: pendingDest,
+        amount: pendingAmount,
+      }).catch((err) => {
+        setError(getErrorMessage(err));
       });
     }
-  }, [isSuccess, txHash]);
+  }, [isSuccess, txHash, executeBridge]);
 
-  const isDisabled =
+  // Handle bridge state changes
+  useEffect(() => {
+    if (bridgeState.status === "success") {
+      const currentAmount = amount;
+      const currentSourceChainId = sourceChainConfig.chain.id;
+      const currentDestChainId = destChainConfig.chain.id;
+      const currentTxHash = bridgeState.txHash;
+
+      setAmount("");
+      refetchBalances();
+
+      if (currentTxHash) {
+        onBridgeSuccessRef.current?.({
+          sourceChainId: currentSourceChainId,
+          destChainId: currentDestChainId,
+          amount: currentAmount,
+          txHash: currentTxHash,
+        });
+      }
+    } else if (bridgeState.status === "error" && bridgeState.error) {
+      setError(bridgeState.error.message);
+    }
+  }, [
+    bridgeState.status,
+    bridgeState.txHash,
+    bridgeState.error,
+    refetchBalances,
+    amount,
+    sourceChainConfig.chain.id,
+    destChainConfig.chain.id,
+  ]);
+
+  // Computed disabled state
+  const isButtonDisabled =
     !isConnected ||
     needsChainSwitch ||
     !amount ||
     parseFloat(amount) <= 0 ||
     parseFloat(amount) > parseFloat(balanceFormatted) ||
-    isWriting ||
     isConfirming ||
-    isApproving;
+    isApproving ||
+    isBridging;
 
-  const getButtonText = () => {
+  const isButtonActuallyDisabled =
+    isButtonDisabled && !needsChainSwitch && isConnected;
+
+  const getButtonText = useCallback(() => {
     if (!isConnected) return "Connect Wallet";
     if (needsChainSwitch) return `Switch to ${sourceChainConfig.chain.name}`;
-    if (isWriting || isConfirming || isApproving) {
-      return needsApproval(amount) ? "Approving..." : "Bridging...";
+
+    // Bridge states
+    if (bridgeState.status === "loading") return "Preparing Bridge...";
+    if (bridgeState.status === "approving") return "Approving...";
+    if (bridgeState.status === "burning") return "Burning USDC...";
+    if (bridgeState.status === "fetching-attestation") return "Fetching Attestation...";
+    if (bridgeState.status === "minting") return "Minting on Destination...";
+
+    // Approval states
+    if (isConfirming || isApproving) {
+      return "Approving...";
     }
+
     if (!amount || parseFloat(amount) <= 0) return "Enter Amount";
     if (parseFloat(amount) > parseFloat(balanceFormatted)) {
       return "Insufficient Balance";
     }
-    if (needsApproval(amount)) return "Approve USDC";
+    if (needsApproval(amount)) return "Approve & Bridge USDC";
     return "Bridge USDC";
-  };
+  }, [
+    isConnected,
+    needsChainSwitch,
+    sourceChainConfig.chain.name,
+    bridgeState.status,
+    isConfirming,
+    isApproving,
+    amount,
+    balanceFormatted,
+    needsApproval,
+  ]);
 
-  const handleButtonClick = () => {
+  const handleButtonClick = useCallback(() => {
     if (!isConnected) {
-      // If custom onConnectWallet is provided, use it
-      // Otherwise, auto-connect with the first available connector
       if (onConnectWallet) {
         onConnectWallet();
       } else if (connectors.length > 0) {
-        connect({ connector: connectors[0] });
+        // Use the first injected connector if available, otherwise first connector
+        const injectedConnector = connectors.find(
+          (c) => c.type === "injected"
+        );
+        connect({ connector: injectedConnector || connectors[0] });
       }
       return;
     }
@@ -592,11 +980,50 @@ export function BridgeWidget({
       return;
     }
     handleBridge();
-  };
+  }, [
+    isConnected,
+    onConnectWallet,
+    connectors,
+    connect,
+    needsChainSwitch,
+    handleSwitchChain,
+    handleBridge,
+  ]);
+
+  // Memoize button styles to avoid recalculation on every render
+  const buttonStyles = useMemo(
+    () => ({
+      width: "100%",
+      padding: "14px",
+      borderRadius: `${theme.borderRadius}px`,
+      fontSize: "14px",
+      fontWeight: 600,
+      border: "none",
+      cursor: isButtonActuallyDisabled ? "not-allowed" : "pointer",
+      transition: "all 0.2s",
+      color: isButtonActuallyDisabled ? theme.mutedTextColor : theme.textColor,
+      background: isButtonActuallyDisabled
+        ? "rgba(255,255,255,0.1)"
+        : `linear-gradient(135deg, ${theme.primaryColor} 0%, ${theme.secondaryColor} 100%)`,
+      boxShadow: isButtonActuallyDisabled
+        ? "none"
+        : `0 4px 14px ${theme.primaryColor}60, inset 0 1px 0 rgba(255,255,255,0.2)`,
+    }),
+    [
+      theme.borderRadius,
+      theme.mutedTextColor,
+      theme.textColor,
+      theme.primaryColor,
+      theme.secondaryColor,
+      isButtonActuallyDisabled,
+    ]
+  );
 
   return (
     <div
       className={className}
+      role="region"
+      aria-label="USDC Bridge Widget"
       style={{
         fontFamily: theme.fontFamily,
         maxWidth: "480px",
@@ -619,38 +1046,66 @@ export function BridgeWidget({
         }}
       >
         <ChainSelector
+          id={sourceChainId}
           label="From"
           chains={chains}
           selectedChain={sourceChainConfig}
           onSelect={setSourceChainConfig}
           excludeChainId={destChainConfig.chain.id}
           theme={theme}
+          balances={allBalances}
+          isLoadingBalances={isLoadingAllBalances}
+          disabled={isOperationPending}
         />
-        <SwapButton onClick={handleSwapChains} theme={theme} />
+        <SwapButton onClick={handleSwapChains} theme={theme} disabled={isOperationPending} />
         <ChainSelector
+          id={destChainId}
           label="To"
           chains={chains}
           selectedChain={destChainConfig}
           onSelect={setDestChainConfig}
           excludeChainId={sourceChainConfig.chain.id}
           theme={theme}
+          balances={allBalances}
+          isLoadingBalances={isLoadingAllBalances}
+          disabled={isOperationPending}
         />
       </div>
 
       {/* Amount Input */}
       <div style={{ marginBottom: "16px" }}>
         <AmountInput
+          id={amountId}
           value={amount}
           onChange={setAmount}
           balance={balanceFormatted}
           onMaxClick={handleMaxClick}
           theme={theme}
+          disabled={isOperationPending}
         />
       </div>
 
-      {/* Error */}
-      {error && (
+      {/* Config Error */}
+      {configError && (
         <div
+          role="alert"
+          style={{
+            fontSize: "12px",
+            color: theme.errorColor,
+            background: `${theme.errorColor}15`,
+            padding: "8px 12px",
+            borderRadius: `${theme.borderRadius}px`,
+            marginBottom: "16px",
+          }}
+        >
+          Configuration Error: {configError}
+        </div>
+      )}
+
+      {/* Error */}
+      {error && !configError && (
+        <div
+          role="alert"
           style={{
             fontSize: "12px",
             color: theme.errorColor,
@@ -667,32 +1122,9 @@ export function BridgeWidget({
       {/* Action Button */}
       <button
         onClick={handleButtonClick}
-        disabled={isDisabled && !needsChainSwitch && isConnected}
-        style={{
-          width: "100%",
-          padding: "14px",
-          borderRadius: `${theme.borderRadius}px`,
-          fontSize: "14px",
-          fontWeight: 600,
-          border: "none",
-          cursor:
-            isDisabled && !needsChainSwitch && isConnected
-              ? "not-allowed"
-              : "pointer",
-          transition: "all 0.2s",
-          color:
-            isDisabled && !needsChainSwitch && isConnected
-              ? theme.mutedTextColor
-              : theme.textColor,
-          background:
-            isDisabled && !needsChainSwitch && isConnected
-              ? "rgba(255,255,255,0.1)"
-              : `linear-gradient(135deg, ${theme.primaryColor} 0%, ${theme.secondaryColor} 100%)`,
-          boxShadow:
-            isDisabled && !needsChainSwitch && isConnected
-              ? "none"
-              : `0 4px 14px ${theme.primaryColor}60, inset 0 1px 0 rgba(255,255,255,0.2)`,
-        }}
+        disabled={isButtonActuallyDisabled}
+        aria-busy={isConfirming || isApproving || isBridging}
+        style={buttonStyles}
       >
         {getButtonText()}
       </button>
