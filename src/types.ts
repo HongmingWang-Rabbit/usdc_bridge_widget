@@ -37,8 +37,8 @@ export interface BridgeChainConfig {
 }
 
 export interface BridgeWidgetProps {
-  /** Array of supported chains with their USDC addresses */
-  chains: BridgeChainConfig[];
+  /** Array of supported chains with their USDC addresses (defaults to all CCTP chains) */
+  chains?: BridgeChainConfig[];
   /** Default source chain ID */
   defaultSourceChainId?: number;
   /** Default destination chain ID */
@@ -63,12 +63,6 @@ export interface BridgeWidgetProps {
   onConnectWallet?: () => void;
   /** Custom theme overrides */
   theme?: BridgeWidgetTheme;
-  /** Widget title */
-  title?: string;
-  /** Widget description */
-  description?: string;
-  /** Whether to show info card at bottom */
-  showInfoCard?: boolean;
   /** Custom CSS class name */
   className?: string;
   /** Custom inline styles */

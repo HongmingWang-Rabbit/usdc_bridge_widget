@@ -32,7 +32,7 @@ npm install react react-dom wagmi viem @tanstack/react-query
 ## Quick Start
 
 ```tsx
-import { BridgeWidget, DEFAULT_CHAIN_CONFIGS } from "@honeypot-finance/usdc-bridge-widget";
+import { BridgeWidget } from "@honeypot-finance/usdc-bridge-widget";
 import { WagmiProvider, createConfig, http } from "wagmi";
 import { mainnet, arbitrum, base, optimism, polygon } from "viem/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -57,8 +57,11 @@ function App() {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
+        {/* Minimal - uses all 17 CCTP chains by default */}
+        <BridgeWidget />
+
+        {/* Or with options */}
         <BridgeWidget
-          chains={DEFAULT_CHAIN_CONFIGS}
           defaultSourceChainId={1}
           defaultDestinationChainId={8453}
           onBridgeSuccess={({ txHash, amount }) => {
@@ -77,7 +80,7 @@ function App() {
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
-| `chains` | `BridgeChainConfig[]` | **required** | Array of supported chains |
+| `chains` | `BridgeChainConfig[]` | All CCTP chains | Array of supported chains |
 | `defaultSourceChainId` | `number` | First chain | Default source chain ID |
 | `defaultDestinationChainId` | `number` | Second chain | Default destination chain ID |
 | `onBridgeStart` | `function` | - | Called when bridge starts |
@@ -85,9 +88,6 @@ function App() {
 | `onBridgeError` | `function` | - | Called on bridge error |
 | `onConnectWallet` | `function` | - | Called when "Connect Wallet" clicked |
 | `theme` | `BridgeWidgetTheme` | Default theme | Custom theme overrides |
-| `title` | `string` | "USDC Bridge" | Widget title |
-| `description` | `string` | "Powered by Circle CCTP" | Widget description |
-| `showInfoCard` | `boolean` | `true` | Show info card at bottom |
 | `className` | `string` | - | Custom CSS class |
 | `style` | `CSSProperties` | - | Custom inline styles |
 

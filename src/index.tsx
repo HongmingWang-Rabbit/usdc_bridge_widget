@@ -19,7 +19,21 @@ export {
 } from "./hooks";
 
 // Re-export viem chains for convenience
-export { mainnet, arbitrum, base, optimism, polygon, avalanche, linea, sei, worldchain } from "viem/chains";
+export {
+  mainnet,
+  arbitrum,
+  avalanche,
+  base,
+  optimism,
+  polygon,
+  linea,
+  sei,
+  worldchain,
+  ink,
+  sonic,
+  xdc,
+} from "viem/chains";
+// Custom chains are exported below: unichain, hyperEvm, plume, monad, codex
 
 // Default USDC addresses
 export const USDC_ADDRESSES: Record<number, `0x${string}`> = {
@@ -57,6 +71,27 @@ export const TOKEN_MESSENGER_V1_ADDRESSES: Record<number, `0x${string}`> = {
 // Circle TokenMessengerV2 address (CCTP V2 - same address on all supported chains)
 export const TOKEN_MESSENGER_V2_ADDRESS: `0x${string}` = "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d";
 
+// Chain icon URLs (using DefiLlama's reliable CDN)
+export const CHAIN_ICONS: Record<number, string> = {
+  1: "https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg", // Ethereum
+  42161: "https://icons.llamao.fi/icons/chains/rsz_arbitrum.jpg", // Arbitrum
+  43114: "https://icons.llamao.fi/icons/chains/rsz_avalanche.jpg", // Avalanche
+  8453: "https://icons.llamao.fi/icons/chains/rsz_base.jpg", // Base
+  10: "https://icons.llamao.fi/icons/chains/rsz_optimism.jpg", // Optimism
+  137: "https://icons.llamao.fi/icons/chains/rsz_polygon.jpg", // Polygon
+  59144: "https://icons.llamao.fi/icons/chains/rsz_linea.jpg", // Linea
+  130: "https://icons.llamao.fi/icons/chains/rsz_unichain.jpg", // Unichain
+  146: "https://icons.llamao.fi/icons/chains/rsz_sonic.jpg", // Sonic
+  480: "https://icons.llamao.fi/icons/chains/rsz_world-chain.jpg", // World Chain
+  143: "https://icons.llamao.fi/icons/chains/rsz_monad.jpg", // Monad
+  1329: "https://icons.llamao.fi/icons/chains/rsz_sei.jpg", // Sei
+  50: "https://icons.llamao.fi/icons/chains/rsz_xdc.jpg", // XDC
+  999: "https://icons.llamao.fi/icons/chains/rsz_hyperevm.jpg", // HyperEVM
+  57073: "https://icons.llamao.fi/icons/chains/rsz_ink.jpg", // Ink
+  98866: "https://icons.llamao.fi/icons/chains/rsz_plume.jpg", // Plume
+  81224: "https://raw.githubusercontent.com/0xa3k5/web3icons/main/packages/core/src/svgs/networks/branded/codex.svg", // Codex
+};
+
 // Combined TokenMessenger addresses (prefers V2)
 export const TOKEN_MESSENGER_ADDRESSES: Record<number, `0x${string}`> = {
   // All CCTP V2 supported chains use the same address
@@ -93,17 +128,105 @@ export function createChainConfig(
     usdcAddress: options?.usdcAddress || USDC_ADDRESSES[chain.id],
     tokenMessengerAddress:
       options?.tokenMessengerAddress || TOKEN_MESSENGER_ADDRESSES[chain.id],
-    iconUrl: options?.iconUrl,
+    iconUrl: options?.iconUrl || CHAIN_ICONS[chain.id],
   };
 }
 
 // Pre-configured chain configs for common chains
-import { mainnet, arbitrum, base, optimism, polygon } from "viem/chains";
+import {
+  mainnet,
+  arbitrum,
+  avalanche,
+  base,
+  optimism,
+  polygon,
+  linea,
+  sei,
+  worldchain,
+  ink,
+  sonic,
+  xdc,
+} from "viem/chains";
+import { defineChain } from "viem";
 
+// Custom chain definitions for chains not yet in viem/chains
+export const unichain = defineChain({
+  id: 130,
+  name: "Unichain",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://mainnet.unichain.org"] },
+  },
+  blockExplorers: {
+    default: { name: "Uniscan", url: "https://uniscan.xyz" },
+  },
+});
+
+export const hyperEvm = defineChain({
+  id: 999,
+  name: "HyperEVM",
+  nativeCurrency: { name: "HYPE", symbol: "HYPE", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.hyperliquid.xyz/evm"] },
+  },
+  blockExplorers: {
+    default: { name: "Hyperscan", url: "https://hyperscan.xyz" },
+  },
+});
+
+export const plume = defineChain({
+  id: 98866,
+  name: "Plume",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.plume.org"] },
+  },
+  blockExplorers: {
+    default: { name: "Plume Explorer", url: "https://explorer.plume.org" },
+  },
+});
+
+export const monad = defineChain({
+  id: 143,
+  name: "Monad",
+  nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.monad.xyz"] },
+  },
+  blockExplorers: {
+    default: { name: "Monad Explorer", url: "https://explorer.monad.xyz" },
+  },
+});
+
+export const codex = defineChain({
+  id: 81224,
+  name: "Codex",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.codex.storage"] },
+  },
+  blockExplorers: {
+    default: { name: "Codex Explorer", url: "https://explorer.codex.storage" },
+  },
+});
+
+// All supported CCTP chains
 export const DEFAULT_CHAIN_CONFIGS: import("./types").BridgeChainConfig[] = [
   createChainConfig(mainnet),
   createChainConfig(arbitrum),
   createChainConfig(base),
   createChainConfig(optimism),
   createChainConfig(polygon),
+  createChainConfig(avalanche),
+  createChainConfig(linea),
+  createChainConfig(sonic),
+  createChainConfig(worldchain),
+  createChainConfig(sei),
+  createChainConfig(xdc),
+  createChainConfig(ink),
+  createChainConfig(unichain),
+  createChainConfig(hyperEvm),
+  createChainConfig(plume),
+  createChainConfig(monad),
+  createChainConfig(codex),
 ];
