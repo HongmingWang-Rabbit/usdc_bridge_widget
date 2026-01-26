@@ -1,6 +1,6 @@
 {
   "name": "@hongming-wang/usdc-bridge-widget",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A reusable USDC cross-chain bridge widget powered by Circle CCTP",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
