@@ -20,7 +20,7 @@ export function useUSDCBalance(chainConfig: BridgeChainConfig | undefined) {
 
   const {
     data: balance,
-    isLoading,
+    isLoading: queryLoading,
     refetch,
   } = useReadContract({
     address: chainConfig?.usdcAddress,
@@ -31,6 +31,9 @@ export function useUSDCBalance(chainConfig: BridgeChainConfig | undefined) {
       enabled: !!address && !!chainConfig?.usdcAddress,
     },
   });
+
+  // Only show loading when wallet is connected and query is actually running
+  const isLoading = !!address && queryLoading;
 
   return {
     balance: balance ?? 0n,
@@ -74,7 +77,7 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
 
   const {
     data: results,
-    isLoading,
+    isLoading: queryLoading,
     refetch,
   } = useReadContracts({
     contracts,
@@ -82,6 +85,9 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
       enabled: !!address && contracts.length > 0,
     },
   });
+
+  // Only show loading when wallet is connected and query is actually running
+  const isLoading = !!address && queryLoading;
 
   // Map results to chain IDs
   const balances = useMemo(() => {
@@ -130,7 +136,7 @@ export function useUSDCAllowance(
 
   const {
     data: allowance,
-    isLoading,
+    isLoading: queryLoading,
     refetch,
   } = useReadContract({
     address: chainConfig?.usdcAddress,
@@ -142,6 +148,9 @@ export function useUSDCAllowance(
       enabled: !!address && !!chainConfig?.usdcAddress && !!effectiveSpender,
     },
   });
+
+  // Only show loading when wallet is connected and query is actually running
+  const isLoading = !!address && queryLoading;
 
   const { writeContractAsync, isPending: isApproving } = useWriteContract();
   const [approvalTxHash, setApprovalTxHash] = useState<

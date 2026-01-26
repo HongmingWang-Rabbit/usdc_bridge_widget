@@ -123,6 +123,8 @@ export interface BridgeWidgetProps {
   onConnectWallet?: () => void;
   /** Custom theme overrides to customize the widget appearance */
   theme?: BridgeWidgetTheme;
+  /** Remove all borders from the widget for seamless integration */
+  borderless?: boolean;
   /** Custom CSS class name to apply to the widget container */
   className?: string;
   /** Custom inline styles to apply to the widget container */

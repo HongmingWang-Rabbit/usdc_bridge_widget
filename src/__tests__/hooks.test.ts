@@ -5,10 +5,11 @@ import type { BridgeChainConfig } from "../types";
 
 // Create mock functions
 const mockUseReadContracts = vi.fn();
+const mockUseAccount = vi.fn();
 
 // Mock wagmi hooks
 vi.mock("wagmi", () => ({
-  useAccount: vi.fn(() => ({ address: "0x1234567890123456789012345678901234567890" })),
+  useAccount: () => mockUseAccount(),
   useReadContract: vi.fn(() => ({
     data: 1000000000n,
     isLoading: false,
@@ -58,6 +59,8 @@ describe("useAllUSDCBalances", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default to connected wallet
+    mockUseAccount.mockReturnValue({ address: "0x1234567890123456789012345678901234567890" });
     mockUseReadContracts.mockReturnValue({
       data: [
         { status: "success", result: 1000000000n },
@@ -123,5 +126,21 @@ describe("useAllUSDCBalances", () => {
     expect(result.current.balances[1].formatted).toBe("0");
     // Successful call should work
     expect(result.current.balances[8453].balance).toBe(500000000n);
+  });
+
+  it("returns isLoading false when wallet not connected", () => {
+    // Set wallet as disconnected
+    mockUseAccount.mockReturnValue({ address: undefined });
+    mockUseReadContracts.mockReturnValue({
+      data: undefined,
+      isLoading: true, // Query reports loading but...
+      refetch: vi.fn(),
+    });
+
+    const { result } = renderHook(() => useAllUSDCBalances(mockChainConfigs));
+
+    // ...isLoading should be false since wallet is not connected
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.balances).toEqual({});
   });
 });

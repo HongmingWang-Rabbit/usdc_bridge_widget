@@ -217,6 +217,22 @@ describe("BridgeWidget", () => {
     expect(widget.style.backgroundColor).toBe("red");
   });
 
+  it("applies borderless style when borderless prop is true", () => {
+    render(<BridgeWidget borderless />);
+    const widget = screen.getByRole("region", { name: "USDC Bridge Widget" });
+    // Check that borderless styles are applied
+    expect(widget.style.background).toBe("transparent");
+    // JSDOM normalizes "0px" to "0"
+    expect(widget.style.borderRadius).toBe("0");
+  });
+
+  it("applies default borders when borderless prop is false", () => {
+    render(<BridgeWidget borderless={false} />);
+    const widget = screen.getByRole("region", { name: "USDC Bridge Widget" });
+    // Check that default styles have border radius (not 0)
+    expect(widget.style.borderRadius).not.toBe("0");
+  });
+
   it("calls onBridgeStart when bridge is initiated", async () => {
     const onBridgeStart = vi.fn();
     render(<BridgeWidget onBridgeStart={onBridgeStart} />);
@@ -263,6 +279,19 @@ describe("BridgeWidget - Disconnected State", () => {
     fireEvent.click(connectButton);
 
     expect(onConnectWallet).toHaveBeenCalled();
+  });
+
+  it("does not show balance in amount input when wallet is disconnected", () => {
+    render(<BridgeWidget />);
+    // Balance label should not be present when disconnected
+    expect(screen.queryByText(/Balance:/)).toBeNull();
+  });
+
+  it("does not show balance in chain selectors when wallet is disconnected", () => {
+    render(<BridgeWidget />);
+    // USDC balance text should not appear in chain selectors
+    expect(screen.queryByText(/1,000.00 USDC/)).toBeNull();
+    expect(screen.queryByText(/500.00 USDC/)).toBeNull();
   });
 });
 

@@ -25,6 +25,26 @@ const DROPDOWN_MAX_HEIGHT = 300;
 const BOX_SHADOW_COLOR = "rgba(0,0,0,0.3)";
 const DISABLED_BUTTON_BACKGROUND = "rgba(255,255,255,0.1)";
 
+// Helper function for borderless styles
+function getBorderlessStyles(
+  borderless: boolean | undefined,
+  theme: Required<BridgeWidgetTheme>,
+  options?: { includeBoxShadow?: boolean; useBackgroundColor?: boolean }
+) {
+  const bgColor = options?.useBackgroundColor
+    ? theme.backgroundColor
+    : theme.cardBackgroundColor;
+
+  return {
+    borderRadius: borderless ? 0 : `${theme.borderRadius}px`,
+    background: borderless ? "transparent" : bgColor,
+    border: borderless ? "none" : `1px solid ${theme.borderColor}`,
+    ...(options?.includeBoxShadow && {
+      boxShadow: borderless ? "none" : `0 4px 24px ${BOX_SHADOW_COLOR}`,
+    }),
+  };
+}
+
 // Shared keyframes style - injected once per document
 const SPINNER_KEYFRAMES = `@keyframes cc-balance-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
 const KEYFRAMES_ATTR = "data-cc-spinner-keyframes";
@@ -128,6 +148,7 @@ function ChainSelector({
   balances,
   isLoadingBalances,
   disabled,
+  borderless,
 }: {
   label: string;
   chains: BridgeChainConfig[];
@@ -139,6 +160,7 @@ function ChainSelector({
   balances?: Record<number, { balance: bigint; formatted: string }>;
   isLoadingBalances?: boolean;
   disabled?: boolean;
+  borderless?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -312,9 +334,7 @@ function ChainSelector({
           alignItems: "center",
           justifyContent: "space-between",
           padding: "10px 12px",
-          borderRadius: `${theme.borderRadius}px`,
-          background: theme.cardBackgroundColor,
-          border: `1px solid ${theme.borderColor}`,
+          ...getBorderlessStyles(borderless, theme),
           cursor: disabled ? "not-allowed" : "pointer",
           opacity: disabled ? 0.6 : 1,
           transition: "all 0.2s",
@@ -344,7 +364,7 @@ function ChainSelector({
               >
                 <BalanceSpinner size={10} /> Loading...
               </span>
-            ) : selectedBalance ? (
+            ) : balances && selectedBalance ? (
               <span
                 style={{
                   fontSize: "10px",
@@ -462,7 +482,7 @@ function ChainSelector({
                       >
                         <BalanceSpinner size={10} />
                       </span>
-                    ) : chainBalance ? (
+                    ) : balances && chainBalance ? (
                       <span
                         style={{
                           fontSize: "10px",
@@ -471,16 +491,7 @@ function ChainSelector({
                       >
                         {formatNumber(chainBalance.formatted, 2)} USDC
                       </span>
-                    ) : (
-                      <span
-                        style={{
-                          fontSize: "10px",
-                          color: theme.mutedTextColor,
-                        }}
-                      >
-                        0.00 USDC
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 </li>
               );
@@ -541,6 +552,8 @@ function AmountInput({
   theme,
   id,
   disabled,
+  showBalance = true,
+  borderless,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -549,6 +562,8 @@ function AmountInput({
   theme: Required<BridgeWidgetTheme>;
   id: string;
   disabled?: boolean;
+  showBalance?: boolean;
+  borderless?: boolean;
 }) {
   const inputId = `${id}-input`;
   const labelId = `${id}-label`;
@@ -598,24 +613,24 @@ function AmountInput({
         >
           Amount
         </label>
-        <span
-          style={{ fontSize: "10px", color: theme.mutedTextColor }}
-          aria-live="polite"
-        >
-          Balance:{" "}
-          <span style={{ color: theme.textColor }}>
-            {formatNumber(balance)} USDC
+        {showBalance && (
+          <span
+            style={{ fontSize: "10px", color: theme.mutedTextColor }}
+            aria-live="polite"
+          >
+            Balance:{" "}
+            <span style={{ color: theme.textColor }}>
+              {formatNumber(balance)} USDC
+            </span>
           </span>
-        </span>
+        )}
       </div>
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          borderRadius: `${theme.borderRadius}px`,
           overflow: "hidden",
-          background: theme.cardBackgroundColor,
-          border: `1px solid ${theme.borderColor}`,
+          ...getBorderlessStyles(borderless, theme),
           opacity: disabled ? 0.6 : 1,
         }}
       >
@@ -724,6 +739,7 @@ export function BridgeWidget({
   onBridgeError,
   onConnectWallet,
   theme: themeOverrides,
+  borderless = false,
   className,
   style,
 }: BridgeWidgetProps) {
@@ -1071,11 +1087,11 @@ export function BridgeWidget({
         fontFamily: theme.fontFamily,
         maxWidth: "480px",
         width: "100%",
-        borderRadius: `${theme.borderRadius}px`,
         padding: "16px",
-        background: theme.backgroundColor,
-        border: `1px solid ${theme.borderColor}`,
-        boxShadow: `0 4px 24px ${BOX_SHADOW_COLOR}`,
+        ...getBorderlessStyles(borderless, theme, {
+          includeBoxShadow: true,
+          useBackgroundColor: true,
+        }),
         ...style,
       }}
     >
@@ -1096,9 +1112,10 @@ export function BridgeWidget({
           onSelect={setSourceChainConfig}
           excludeChainId={destChainConfig.chain.id}
           theme={theme}
-          balances={allBalances}
-          isLoadingBalances={isLoadingAllBalances}
+          balances={isConnected ? allBalances : undefined}
+          isLoadingBalances={isConnected && isLoadingAllBalances}
           disabled={isOperationPending}
+          borderless={borderless}
         />
         <SwapButton onClick={handleSwapChains} theme={theme} disabled={isOperationPending} />
         <ChainSelector
@@ -1109,9 +1126,10 @@ export function BridgeWidget({
           onSelect={setDestChainConfig}
           excludeChainId={sourceChainConfig.chain.id}
           theme={theme}
-          balances={allBalances}
-          isLoadingBalances={isLoadingAllBalances}
+          balances={isConnected ? allBalances : undefined}
+          isLoadingBalances={isConnected && isLoadingAllBalances}
           disabled={isOperationPending}
+          borderless={borderless}
         />
       </div>
 
@@ -1125,6 +1143,8 @@ export function BridgeWidget({
           onMaxClick={handleMaxClick}
           theme={theme}
           disabled={isOperationPending}
+          showBalance={isConnected}
+          borderless={borderless}
         />
       </div>
 
