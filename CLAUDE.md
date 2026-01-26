@@ -81,12 +81,28 @@ const config = createConfig({
 **Wallet Connection (RainbowKit example):**
 ```tsx
 import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { useAccount } from 'wagmi';
 
 function App() {
   const { openConnectModal } = useConnectModal();
-  return <BridgeWidget onConnectWallet={openConnectModal} />;
+  const { isConnected } = useAccount();
+
+  const handleConnectWallet = () => {
+    if (!isConnected) {
+      openConnectModal?.();
+    }
+  };
+
+  return <BridgeWidget onConnectWallet={handleConnectWallet} />;
 }
 ```
+
+**Reconnection Handling:**
+- Widget detects `reconnecting` and `connecting` states from wagmi
+- Shows "Connecting..." button text during reconnection (prevents UI flicker)
+- Prevents `onConnectWallet` callback from being called during reconnection
+- Uses `useAccountEffect` for connection/disconnection events
+- On disconnect: clears form state (amount, error, txHash) and resets bridge
 
 The widget fully integrates Circle's Bridge Kit for cross-chain USDC transfers. The `useBridge` hook handles:
 - Wallet provider detection and validation
@@ -109,6 +125,14 @@ Pre-built presets available: `dark` (default), `light`, `blue`, `green`
 - `borderless` prop: Removes all borders, shadows, and backgrounds for seamless integration
 - Balance display is hidden when wallet is not connected (improved UX)
 - Loading states only show when wallet is connected and query is running
+
+### Balance Query Configuration
+
+The `useAllUSDCBalances` hook uses optimized react-query settings:
+- `enabled`: Only runs when address exists, isConnected is true, and contracts are configured
+- `refetchOnWindowFocus: true`: Refreshes balances when user returns to tab
+- `refetchOnReconnect: true`: Refreshes balances on network reconnection
+- `staleTime: 5000`: Prevents excessive refetches while keeping data fresh
 
 ### Deprecation Notes
 
