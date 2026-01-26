@@ -88,6 +88,7 @@ function App() {
 | `onBridgeError` | `function` | - | Called on bridge error |
 | `onConnectWallet` | `function` | - | Called when "Connect Wallet" clicked |
 | `theme` | `BridgeWidgetTheme` | Default theme | Custom theme overrides |
+| `borderless` | `boolean` | `false` | Remove borders/shadows for seamless integration |
 | `className` | `string` | - | Custom CSS class |
 | `style` | `CSSProperties` | - | Custom inline styles |
 
@@ -167,6 +168,22 @@ const customChainConfig = {
     fontFamily: "Inter, sans-serif",
   }}
 />
+```
+
+## Borderless Mode
+
+Use the `borderless` prop for seamless integration into your existing UI. This removes all borders, shadows, and backgrounds from the widget container and its child components:
+
+```tsx
+<BridgeWidget borderless />
+
+{/* Or combine with custom styling */}
+<div className="my-custom-container">
+  <BridgeWidget
+    borderless
+    style={{ padding: 0 }}
+  />
+</div>
 ```
 
 ## Callbacks

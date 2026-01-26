@@ -70,6 +70,12 @@ The theme supports customization of:
 
 Pre-built presets available: `dark` (default), `light`, `blue`, `green`
 
+### UI Customization
+
+- `borderless` prop: Removes all borders, shadows, and backgrounds for seamless integration
+- Balance display is hidden when wallet is not connected (improved UX)
+- Loading states only show when wallet is connected and query is running
+
 ### Deprecation Notes
 
 - `useBridgeEstimate` - Deprecated, use `useBridgeQuote` from `useBridge.ts` instead
