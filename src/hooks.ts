@@ -12,6 +12,10 @@ import { USDC_DECIMALS } from "./constants";
 import { formatNumber } from "./utils";
 import { getBridgeChain } from "./useBridge";
 
+// Module-level flags to emit deprecation warnings only once per session
+let _useBridgeEstimateWarned = false;
+let _useFormatNumberWarned = false;
+
 /**
  * Hook to get USDC balance for a specific chain
  */
@@ -119,6 +123,8 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
   return {
     balances,
     isLoading,
+    // Cast to () => void since we don't need the Promise return value.
+    // The caller just needs to trigger a refetch, not await it.
     refetch: refetch as () => void,
   };
 }
@@ -249,12 +255,15 @@ export function useBridgeEstimate(
   destChainId: number | undefined,
   amount: string
 ) {
-  // Emit deprecation warning once
+  // Emit deprecation warning once per session
   useEffect(() => {
-    console.warn(
-      "[DEPRECATED] useBridgeEstimate is deprecated and will be removed in a future version. " +
-      "Use useBridgeQuote from './useBridge' instead."
-    );
+    if (!_useBridgeEstimateWarned) {
+      _useBridgeEstimateWarned = true;
+      console.warn(
+        "[DEPRECATED] useBridgeEstimate is deprecated and will be removed in a future version. " +
+        "Use useBridgeQuote from './useBridge' instead."
+      );
+    }
   }, []);
 
   const [estimate, setEstimate] = useState<BridgeEstimate | null>(null);
@@ -341,12 +350,15 @@ export function useBridgeEstimate(
  * const formatted = formatNumber(1234.56, 2);
  */
 export function useFormatNumber() {
-  // Emit deprecation warning once
+  // Emit deprecation warning once per session
   useEffect(() => {
-    console.warn(
-      "[DEPRECATED] useFormatNumber is deprecated and will be removed in a future version. " +
-      "Use the formatNumber utility function from './utils' directly instead."
-    );
+    if (!_useFormatNumberWarned) {
+      _useFormatNumberWarned = true;
+      console.warn(
+        "[DEPRECATED] useFormatNumber is deprecated and will be removed in a future version. " +
+        "Use the formatNumber utility function from './utils' directly instead."
+      );
+    }
   }, []);
 
   return useCallback(

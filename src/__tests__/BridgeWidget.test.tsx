@@ -293,6 +293,37 @@ describe("BridgeWidget - Disconnected State", () => {
     expect(screen.queryByText(/1,000.00 USDC/)).toBeNull();
     expect(screen.queryByText(/500.00 USDC/)).toBeNull();
   });
+
+  it("refetches balances when isConnected changes to true", () => {
+    const refetchMock = vi.fn();
+    mockUseAllUSDCBalances.mockReturnValue({
+      balances: {},
+      isLoading: false,
+      refetch: refetchMock,
+    });
+
+    // Start disconnected
+    mockUseAccount.mockReturnValue({
+      address: undefined,
+      isConnected: false,
+    });
+
+    const { rerender } = render(<BridgeWidget />);
+
+    // Refetch should not be called when disconnected
+    expect(refetchMock).not.toHaveBeenCalled();
+
+    // Simulate wallet connection
+    mockUseAccount.mockReturnValue({
+      address: "0x1234567890123456789012345678901234567890",
+      isConnected: true,
+    });
+
+    rerender(<BridgeWidget />);
+
+    // Refetch should be called after connection
+    expect(refetchMock).toHaveBeenCalled();
+  });
 });
 
 describe("BridgeWidget - Chain Switch Required", () => {

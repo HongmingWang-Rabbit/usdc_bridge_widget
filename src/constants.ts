@@ -29,6 +29,7 @@ export const USDC_ADDRESSES: Record<number, `0x${string}`> = {
   130: "0x078D782b760474a361dDA0AF3839290b0EF57AD6", // Unichain
   146: "0x29219dd400f2Bf60E5a23d13Be72B486D4038894", // Sonic
   480: "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1", // World Chain
+  // Note: Monad is defined but not yet supported by Circle Bridge Kit SDK
   10200: "0x754704Bc059F8C67012fEd69BC8A327a5aafb603", // Monad
   1329: "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392", // Sei
   50: "0xfA2958CB79b0491CC627c1557F441eF849Ca8eb1", // XDC

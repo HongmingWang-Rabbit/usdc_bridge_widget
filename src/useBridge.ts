@@ -5,7 +5,9 @@ import { createViemAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
 import type { BridgeChainConfig } from "./types";
 import type { EIP1193Provider } from "viem";
 
-// Maximum number of events to retain to prevent memory growth
+// Maximum number of events to retain to prevent memory growth.
+// 100 events is sufficient to track a full bridge lifecycle (approve, burn, attestation, mint)
+// while preventing unbounded memory growth in long-running sessions.
 const MAX_EVENTS = 100;
 
 // Chain ID to BridgeChain enum mapping
@@ -256,7 +258,8 @@ export function useBridge(): UseBridgeResult {
             kit.off("fetchAttestation", handleFetchAttestation);
             kit.off("mint", handleMint);
           } catch {
-            // Ignore errors during cleanup (kit may not support off)
+            // Bridge Kit's off() method may not exist in all versions or may throw
+            // if listeners were already removed. Safe to ignore during cleanup.
           }
         };
 

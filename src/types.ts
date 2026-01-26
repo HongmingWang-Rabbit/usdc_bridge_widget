@@ -55,7 +55,12 @@ export interface BridgeChainConfig {
   chain: Chain;
   /** USDC token contract address on this chain (checksummed) */
   usdcAddress: `0x${string}`;
-  /** Circle TokenMessenger contract address for CCTP transfers */
+  /**
+   * Circle TokenMessenger contract address for CCTP transfers.
+   * While marked optional for type flexibility, this address is required
+   * for bridging to work. The widget will use TOKEN_MESSENGER_ADDRESSES
+   * from constants.ts as defaults if not provided via createChainConfig().
+   */
   tokenMessengerAddress?: `0x${string}`;
   /** URL for the chain's icon/logo image (optional, falls back to initial) */
   iconUrl?: string;

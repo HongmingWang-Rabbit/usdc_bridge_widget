@@ -804,12 +804,12 @@ export function BridgeWidget({
     sourceChainConfig
   );
 
-  // Refetch balances when wallet connects or address changes
+  // Refetch balances when wallet connects, disconnects, or address changes
   useEffect(() => {
-    if (address) {
+    if (isConnected && address) {
       refetchAllBalances();
     }
-  }, [address, refetchAllBalances]);
+  }, [isConnected, address, refetchAllBalances]);
 
   // Bridge hook
   const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
@@ -1027,6 +1027,7 @@ export function BridgeWidget({
         onConnectWallet();
       } else {
         // Warn when onConnectWallet is not provided - helps developers debug
+        // Note: Bundlers typically strip console.warn in production builds
         console.warn(
           "[BridgeWidget] onConnectWallet prop is not provided. " +
           "Please provide onConnectWallet to handle wallet connection " +
