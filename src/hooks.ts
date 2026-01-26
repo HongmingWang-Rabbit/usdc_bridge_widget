@@ -63,11 +63,11 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
   isLoading: boolean;
   refetch: () => void;
 } {
-  const { address } = useAccount();
+  const { address, isConnected } = useAccount();
 
   // Build contract read configs for all chains
   const contracts = useMemo(() => {
-    if (!address) return [];
+    if (!address || !isConnected) return [];
     return chainConfigs
       .filter((config) => config.usdcAddress)
       .map((config) => ({
@@ -77,7 +77,7 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
         args: [address] as const,
         chainId: config.chain.id,
       }));
-  }, [address, chainConfigs]);
+  }, [address, isConnected, chainConfigs]);
 
   const {
     data: results,
@@ -86,12 +86,15 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
   } = useReadContracts({
     contracts,
     query: {
-      enabled: !!address && contracts.length > 0,
+      enabled: !!address && isConnected && contracts.length > 0,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+      staleTime: 0, // Always fetch fresh data on reconnect
     },
   });
 
   // Only show loading when wallet is connected and query is actually running
-  const isLoading = !!address && queryLoading;
+  const isLoading = !!address && isConnected && queryLoading;
 
   // Map results to chain IDs
   const balances = useMemo(() => {

@@ -60,7 +60,10 @@ describe("useAllUSDCBalances", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default to connected wallet
-    mockUseAccount.mockReturnValue({ address: "0x1234567890123456789012345678901234567890" });
+    mockUseAccount.mockReturnValue({
+      address: "0x1234567890123456789012345678901234567890",
+      isConnected: true,
+    });
     mockUseReadContracts.mockReturnValue({
       data: [
         { status: "success", result: 1000000000n },
@@ -130,7 +133,7 @@ describe("useAllUSDCBalances", () => {
 
   it("returns isLoading false when wallet not connected", () => {
     // Set wallet as disconnected
-    mockUseAccount.mockReturnValue({ address: undefined });
+    mockUseAccount.mockReturnValue({ address: undefined, isConnected: false });
     mockUseReadContracts.mockReturnValue({
       data: undefined,
       isLoading: true, // Query reports loading but...

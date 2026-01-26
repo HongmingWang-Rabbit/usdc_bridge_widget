@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useId, useMemo } from "react";
 import {
   useAccount,
+  useAccountEffect,
   useChainId,
   useSwitchChain,
   useWaitForTransactionReceipt,
@@ -743,9 +744,12 @@ export function BridgeWidget({
   style,
 }: BridgeWidgetProps) {
   const theme = mergeTheme(themeOverrides);
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
   const currentChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
+
+  // Detect reconnecting/connecting states to prevent UI flicker
+  const isReconnecting = status === "reconnecting" || status === "connecting";
 
   // Validate chain configs on mount/change
   const [configError, setConfigError] = useState<string | null>(null);
@@ -804,12 +808,15 @@ export function BridgeWidget({
     sourceChainConfig
   );
 
-  // Refetch balances when wallet connects, disconnects, or address changes
-  useEffect(() => {
-    if (isConnected && address) {
+  // Refetch balances on wallet connection events
+  useAccountEffect({
+    onConnect: () => {
       refetchAllBalances();
-    }
-  }, [isConnected, address, refetchAllBalances]);
+    },
+    onDisconnect: () => {
+      // Balances will be cleared automatically when address becomes undefined
+    },
+  });
 
   // Bridge hook
   const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
@@ -985,6 +992,7 @@ export function BridgeWidget({
     isButtonDisabled && !needsChainSwitch && isConnected;
 
   const buttonText = useMemo(() => {
+    if (isReconnecting) return "Connecting...";
     if (!isConnected) return "Connect Wallet";
     if (needsChainSwitch) return `Switch to ${sourceChainConfig.chain.name}`;
 
@@ -1007,6 +1015,7 @@ export function BridgeWidget({
     if (needsApproval(amount)) return "Approve & Bridge USDC";
     return "Bridge USDC";
   }, [
+    isReconnecting,
     isConnected,
     needsChainSwitch,
     sourceChainConfig.chain.name,
@@ -1020,6 +1029,9 @@ export function BridgeWidget({
   ]);
 
   const handleButtonClick = useCallback(() => {
+    // Prevent actions during reconnection
+    if (isReconnecting) return;
+
     if (!isConnected) {
       // Delegate wallet connection to the parent app via onConnectWallet callback
       // This ensures compatibility with RainbowKit, ConnectKit, web3modal, etc.
@@ -1042,6 +1054,7 @@ export function BridgeWidget({
     }
     handleBridge();
   }, [
+    isReconnecting,
     isConnected,
     onConnectWallet,
     needsChainSwitch,

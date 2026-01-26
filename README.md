@@ -82,17 +82,74 @@ function App() {
 
 ```tsx
 import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { useAccount } from 'wagmi';
 
 function App() {
   const { openConnectModal } = useConnectModal();
+  const { isConnected } = useAccount();
+
+  // Prevent opening modal if already connected or reconnecting
+  const handleConnectWallet = () => {
+    if (!isConnected && openConnectModal) {
+      openConnectModal();
+    }
+  };
 
   return (
     <BridgeWidget
-      onConnectWallet={openConnectModal}
+      onConnectWallet={handleConnectWallet}
       // ... other props
     />
   );
 }
+```
+
+## Important Integration Notes
+
+### Wagmi Config Must Match Widget Chains
+
+The widget fetches USDC balances for all chains passed via the `chains` prop. Your wagmi config **must include transports** for every chain you want to display:
+
+```tsx
+import { createConfig, http } from 'wagmi';
+import { mainnet, base, arbitrum } from 'viem/chains';
+import { createChainConfig } from '@honeypot-finance/usdc-bridge-widget';
+
+// ✅ Good: Wagmi config matches widget chains
+const config = createConfig({
+  chains: [mainnet, base, arbitrum],
+  transports: {
+    [mainnet.id]: http(),
+    [base.id]: http(),
+    [arbitrum.id]: http(),
+  },
+});
+
+const widgetChains = [
+  createChainConfig(mainnet),
+  createChainConfig(base),
+  createChainConfig(arbitrum),
+];
+
+<BridgeWidget chains={widgetChains} />
+```
+
+If a chain is in the widget but not in your wagmi config, balance fetching will fail for that chain.
+
+### Handling Wallet Reconnection
+
+The widget handles reconnecting states automatically, showing "Connecting..." during wagmi's auto-reconnect. Your `onConnectWallet` callback should check connection status to avoid opening the modal during reconnection:
+
+```tsx
+const { isConnected, status } = useAccount();
+
+const handleConnectWallet = () => {
+  // Don't open modal if reconnecting or already connected
+  if (status === 'reconnecting' || status === 'connecting') return;
+  if (isConnected) return;
+
+  openConnectModal?.();
+};
 ```
 
 ## Props
