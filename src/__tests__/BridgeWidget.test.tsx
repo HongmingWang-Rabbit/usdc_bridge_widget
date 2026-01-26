@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import React from "react";
 import { BridgeWidget } from "../BridgeWidget";
 
@@ -14,10 +14,16 @@ const mockUseAllUSDCBalances = vi.fn();
 const mockUseUSDCAllowance = vi.fn();
 const mockUseBridge = vi.fn();
 
+// Store useAccountEffect callbacks for testing
+let accountEffectCallbacks: { onConnect?: () => void; onDisconnect?: () => void } = {};
+const mockUseAccountEffect = vi.fn((callbacks: { onConnect?: () => void; onDisconnect?: () => void }) => {
+  accountEffectCallbacks = callbacks;
+});
+
 // Mock wagmi hooks
 vi.mock("wagmi", () => ({
   useAccount: () => mockUseAccount(),
-  useAccountEffect: vi.fn(), // No-op for tests
+  useAccountEffect: (callbacks: { onConnect?: () => void; onDisconnect?: () => void }) => mockUseAccountEffect(callbacks),
   useChainId: () => mockUseChainId(),
   useSwitchChain: () => mockUseSwitchChain(),
   useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
@@ -86,6 +92,9 @@ vi.mock("../constants", () => ({
 
 // Default mock values
 function setupDefaultMocks() {
+  // Reset accountEffectCallbacks for each test
+  accountEffectCallbacks = {};
+
   mockUseAccount.mockReturnValue({
     address: "0x1234567890123456789012345678901234567890",
     isConnected: true,
@@ -297,7 +306,7 @@ describe("BridgeWidget - Disconnected State", () => {
     expect(screen.queryByText(/500.00 USDC/)).toBeNull();
   });
 
-  it("refetches balances when isConnected changes to true", () => {
+  it("refetches balances when onConnect callback is triggered", () => {
     const refetchMock = vi.fn();
     mockUseAllUSDCBalances.mockReturnValue({
       balances: {},
@@ -305,29 +314,43 @@ describe("BridgeWidget - Disconnected State", () => {
       refetch: refetchMock,
     });
 
-    // Start disconnected
-    mockUseAccount.mockReturnValue({
-      address: undefined,
-      isConnected: false,
-      status: "disconnected",
+    render(<BridgeWidget />);
+
+    // Verify useAccountEffect was called with callbacks
+    expect(mockUseAccountEffect).toHaveBeenCalled();
+    expect(accountEffectCallbacks.onConnect).toBeDefined();
+
+    // Simulate onConnect being triggered (as wagmi would do on wallet connect)
+    accountEffectCallbacks.onConnect?.();
+
+    // Refetch should be called
+    expect(refetchMock).toHaveBeenCalled();
+  });
+
+  it("clears form state when onDisconnect callback is triggered", () => {
+    const resetBridgeMock = vi.fn();
+    mockUseBridge.mockReturnValue({
+      bridge: vi.fn(),
+      state: { status: "idle", events: [] },
+      reset: resetBridgeMock,
     });
 
-    const { rerender } = render(<BridgeWidget />);
+    render(<BridgeWidget />);
 
-    // Refetch should not be called when disconnected (useAccountEffect is mocked as no-op)
-    expect(refetchMock).not.toHaveBeenCalled();
+    // Enter some amount first
+    const input = screen.getByPlaceholderText("0.00");
+    fireEvent.change(input, { target: { value: "100" } });
 
-    // Simulate wallet connection
-    mockUseAccount.mockReturnValue({
-      address: "0x1234567890123456789012345678901234567890",
-      isConnected: true,
-      status: "connected",
+    // Verify useAccountEffect was called with callbacks
+    expect(accountEffectCallbacks.onDisconnect).toBeDefined();
+
+    // Simulate onDisconnect being triggered (as wagmi would do on wallet disconnect)
+    act(() => {
+      accountEffectCallbacks.onDisconnect?.();
     });
 
-    rerender(<BridgeWidget />);
-
-    // Note: With useAccountEffect mocked as no-op, refetch won't be called during test
-    // In production, useAccountEffect.onConnect triggers refetch
+    // Bridge reset should be called
+    expect(resetBridgeMock).toHaveBeenCalled();
   });
 });
 

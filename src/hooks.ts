@@ -89,7 +89,9 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
       enabled: !!address && isConnected && contracts.length > 0,
       refetchOnWindowFocus: true,
       refetchOnReconnect: true,
-      staleTime: 0, // Always fetch fresh data on reconnect
+      // Short stale time ensures fresh balances after transactions while
+      // preventing excessive refetches during normal usage
+      staleTime: 5000,
     },
   });
 

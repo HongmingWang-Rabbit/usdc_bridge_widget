@@ -138,17 +138,15 @@ If a chain is in the widget but not in your wagmi config, balance fetching will 
 
 ### Handling Wallet Reconnection
 
-The widget handles reconnecting states automatically, showing "Connecting..." during wagmi's auto-reconnect. Your `onConnectWallet` callback should check connection status to avoid opening the modal during reconnection:
+The widget handles reconnecting states automatically, showing "Connecting..." during wagmi's auto-reconnect. Your `onConnectWallet` callback only needs a simple `isConnected` check since the widget handles reconnecting states internally:
 
 ```tsx
-const { isConnected, status } = useAccount();
+const { isConnected } = useAccount();
 
 const handleConnectWallet = () => {
-  // Don't open modal if reconnecting or already connected
-  if (status === 'reconnecting' || status === 'connecting') return;
-  if (isConnected) return;
-
-  openConnectModal?.();
+  if (!isConnected) {
+    openConnectModal?.();
+  }
 };
 ```
 

@@ -808,18 +808,22 @@ export function BridgeWidget({
     sourceChainConfig
   );
 
+  // Bridge hook
+  const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
+
   // Refetch balances on wallet connection events
   useAccountEffect({
     onConnect: () => {
       refetchAllBalances();
     },
     onDisconnect: () => {
-      // Balances will be cleared automatically when address becomes undefined
+      // Clear form state when wallet disconnects
+      setAmount("");
+      setError(null);
+      setTxHash(undefined);
+      resetBridge();
     },
   });
-
-  // Bridge hook
-  const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
 
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash: txHash,
