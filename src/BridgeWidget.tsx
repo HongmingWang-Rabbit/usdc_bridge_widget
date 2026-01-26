@@ -756,6 +756,14 @@ export function BridgeWidget({
     refetchAllBalances();
   }, [refetchBalance, refetchAllBalances]);
 
+  // Refetch balances when wallet connects or address changes
+  useEffect(() => {
+    if (address) {
+      refetchAllBalances();
+      refetchBalance();
+    }
+  }, [address, refetchAllBalances, refetchBalance]);
+
   // Bridge hook
   const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
 
