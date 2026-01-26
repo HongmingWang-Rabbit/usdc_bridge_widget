@@ -54,6 +54,40 @@ Direct dependencies:
 
 ### Integration Notes
 
+The widget uses wagmi hooks and requires the parent app to provide a properly configured `WagmiProvider`. The widget does NOT auto-connect wallets - parent apps must provide the `onConnectWallet` callback.
+
+**Wagmi Config Requirements:**
+- The widget reads from the parent's `WagmiProvider` context
+- For multi-chain balance fetching to work, wagmi config must include transports for ALL chains displayed in the widget
+- Wallet connection is delegated to the parent app via `onConnectWallet` prop
+
+**Example wagmi config for multi-chain support:**
+```typescript
+import { http, createConfig } from 'wagmi';
+import { mainnet, base, arbitrum, optimism } from 'wagmi/chains';
+
+const config = createConfig({
+  chains: [mainnet, base, arbitrum, optimism],
+  transports: {
+    // Use default public RPCs or provide custom URLs for reliability
+    [mainnet.id]: http(), // or http('https://eth.llamarpc.com')
+    [base.id]: http(),
+    [arbitrum.id]: http(),
+    [optimism.id]: http(),
+  },
+});
+```
+
+**Wallet Connection (RainbowKit example):**
+```tsx
+import { useConnectModal } from '@rainbow-me/rainbowkit';
+
+function App() {
+  const { openConnectModal } = useConnectModal();
+  return <BridgeWidget onConnectWallet={openConnectModal} />;
+}
+```
+
 The widget fully integrates Circle's Bridge Kit for cross-chain USDC transfers. The `useBridge` hook handles:
 - Wallet provider detection and validation
 - Event-driven status updates (approving, burning, fetching-attestation, minting)

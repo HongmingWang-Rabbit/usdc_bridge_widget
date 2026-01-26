@@ -38,7 +38,7 @@ import { mainnet, arbitrum, base, optimism, polygon } from "viem/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { injected } from "wagmi/connectors";
 
-// Create wagmi config
+// Create wagmi config - IMPORTANT: Include transports for ALL chains you want to fetch balances from
 const config = createConfig({
   chains: [mainnet, arbitrum, base, optimism, polygon],
   connectors: [injected()],
@@ -54,22 +54,43 @@ const config = createConfig({
 const queryClient = new QueryClient();
 
 function App() {
+  // You need to provide onConnectWallet to handle wallet connection
+  const handleConnectWallet = () => {
+    // For RainbowKit: use openConnectModal from useConnectModal()
+    // For ConnectKit: use open from useModal()
+    // For web3modal: use open from useWeb3Modal()
+  };
+
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        {/* Minimal - uses all 17 CCTP chains by default */}
-        <BridgeWidget />
-
-        {/* Or with options */}
         <BridgeWidget
           defaultSourceChainId={1}
           defaultDestinationChainId={8453}
+          onConnectWallet={handleConnectWallet}
           onBridgeSuccess={({ txHash, amount }) => {
             console.log(`Bridged ${amount} USDC: ${txHash}`);
           }}
         />
       </QueryClientProvider>
     </WagmiProvider>
+  );
+}
+```
+
+### RainbowKit Integration
+
+```tsx
+import { useConnectModal } from '@rainbow-me/rainbowkit';
+
+function App() {
+  const { openConnectModal } = useConnectModal();
+
+  return (
+    <BridgeWidget
+      onConnectWallet={openConnectModal}
+      // ... other props
+    />
   );
 }
 ```
@@ -86,7 +107,7 @@ function App() {
 | `onBridgeStart` | `function` | - | Called when bridge starts |
 | `onBridgeSuccess` | `function` | - | Called on successful bridge |
 | `onBridgeError` | `function` | - | Called on bridge error |
-| `onConnectWallet` | `function` | - | Called when "Connect Wallet" clicked |
+| `onConnectWallet` | `function` | - | **Recommended.** Called when "Connect Wallet" clicked. Required for wallet connection to work. |
 | `theme` | `BridgeWidgetTheme` | Default theme | Custom theme overrides |
 | `borderless` | `boolean` | `false` | Remove borders/shadows for seamless integration |
 | `className` | `string` | - | Custom CSS class |

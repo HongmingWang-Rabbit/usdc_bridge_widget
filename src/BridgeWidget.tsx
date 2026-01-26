@@ -4,7 +4,6 @@ import {
   useChainId,
   useSwitchChain,
   useWaitForTransactionReceipt,
-  useConnect,
 } from "wagmi";
 import type {
   BridgeWidgetProps,
@@ -747,7 +746,6 @@ export function BridgeWidget({
   const { address, isConnected } = useAccount();
   const currentChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
-  const { connect, connectors } = useConnect();
 
   // Validate chain configs on mount/change
   const [configError, setConfigError] = useState<string | null>(null);
@@ -986,7 +984,7 @@ export function BridgeWidget({
   const isButtonActuallyDisabled =
     isButtonDisabled && !needsChainSwitch && isConnected;
 
-  const getButtonText = useCallback(() => {
+  const buttonText = useMemo(() => {
     if (!isConnected) return "Connect Wallet";
     if (needsChainSwitch) return `Switch to ${sourceChainConfig.chain.name}`;
 
@@ -1023,14 +1021,17 @@ export function BridgeWidget({
 
   const handleButtonClick = useCallback(() => {
     if (!isConnected) {
+      // Delegate wallet connection to the parent app via onConnectWallet callback
+      // This ensures compatibility with RainbowKit, ConnectKit, web3modal, etc.
       if (onConnectWallet) {
         onConnectWallet();
-      } else if (connectors.length > 0) {
-        // Use the first injected connector if available, otherwise first connector
-        const injectedConnector = connectors.find(
-          (c) => c.type === "injected"
+      } else {
+        // Warn when onConnectWallet is not provided - helps developers debug
+        console.warn(
+          "[BridgeWidget] onConnectWallet prop is not provided. " +
+          "Please provide onConnectWallet to handle wallet connection " +
+          "(e.g., openConnectModal from RainbowKit)."
         );
-        connect({ connector: injectedConnector || connectors[0] });
       }
       return;
     }
@@ -1042,8 +1043,6 @@ export function BridgeWidget({
   }, [
     isConnected,
     onConnectWallet,
-    connectors,
-    connect,
     needsChainSwitch,
     handleSwitchChain,
     handleBridge,
@@ -1189,7 +1188,7 @@ export function BridgeWidget({
         aria-busy={isConfirming || isApproving || isBridging}
         style={buttonStyles}
       >
-        {getButtonText()}
+        {buttonText}
       </button>
     </div>
   );

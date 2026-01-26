@@ -13,6 +13,43 @@ This documentation covers the architecture and implementation details of the USD
 - [Main README](../README.md) - Installation, usage, and API reference
 - [CLAUDE.md](../CLAUDE.md) - Development guidelines and architecture overview
 
+## Integration Requirements
+
+### Wagmi Configuration
+
+The widget uses wagmi hooks and requires the parent app to provide a properly configured `WagmiProvider`. Key requirements:
+
+1. **Multi-chain transports**: For balance fetching to work across all chains, your wagmi config must include transports for ALL chains displayed in the widget
+2. **No auto-connect**: The widget does NOT auto-connect wallets - you must provide the `onConnectWallet` callback
+
+```typescript
+// Example wagmi config
+import { http, createConfig } from 'wagmi';
+import { mainnet, base, arbitrum, optimism } from 'wagmi/chains';
+
+const config = createConfig({
+  chains: [mainnet, base, arbitrum, optimism],
+  transports: {
+    [mainnet.id]: http(),
+    [base.id]: http(),
+    [arbitrum.id]: http(),
+    [optimism.id]: http(),
+  },
+});
+```
+
+### Wallet Connection
+
+The widget delegates wallet connection to the parent app. For different wallet libraries:
+
+| Library | Integration |
+|---------|-------------|
+| RainbowKit | `<BridgeWidget onConnectWallet={openConnectModal} />` |
+| ConnectKit | `<BridgeWidget onConnectWallet={open} />` |
+| web3modal | `<BridgeWidget onConnectWallet={open} />` |
+
+If `onConnectWallet` is not provided, a console warning will be logged when the user clicks "Connect Wallet".
+
 ## Architecture Overview
 
 ### Core Components

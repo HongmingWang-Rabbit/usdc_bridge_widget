@@ -118,7 +118,17 @@ export interface BridgeWidgetProps {
   onBridgeError?: (error: Error) => void;
   /**
    * Callback fired when the user clicks "Connect Wallet".
-   * If not provided, the widget will attempt to use wagmi's connectors.
+   * Recommended for wallet connection to work. The widget does not auto-connect.
+   * If not provided, a warning will be logged in development mode.
+   *
+   * For RainbowKit: use `openConnectModal` from `useConnectModal()`
+   * For ConnectKit: use `open` from `useModal()`
+   * For web3modal: use `open` from `useWeb3Modal()`
+   *
+   * @example
+   * // RainbowKit
+   * const { openConnectModal } = useConnectModal();
+   * <BridgeWidget onConnectWallet={openConnectModal} />
    */
   onConnectWallet?: () => void;
   /** Custom theme overrides to customize the widget appearance */
