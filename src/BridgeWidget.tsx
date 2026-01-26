@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useId, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useId, useMemo } from "react";
 import {
   useAccount,
   useChainId,
@@ -11,13 +11,33 @@ import type {
   BridgeWidgetTheme,
   BridgeChainConfig,
 } from "./types";
-import { useUSDCBalance, useUSDCAllowance, useAllUSDCBalances } from "./hooks";
+import { useUSDCAllowance, useAllUSDCBalances } from "./hooks";
 import { useBridge } from "./useBridge";
 import { DEFAULT_CHAIN_CONFIGS } from "./chains";
 import { USDC_BRAND_COLOR } from "./constants";
 import { formatNumber, getErrorMessage, validateAmountInput, validateChainConfigs } from "./utils";
 import { mergeTheme } from "./theme";
 import { ChevronDownIcon, SwapIcon } from "./icons";
+
+// Constants
+const TYPE_AHEAD_RESET_MS = 1000;
+const DROPDOWN_MAX_HEIGHT = 300;
+const BOX_SHADOW_COLOR = "rgba(0,0,0,0.3)";
+const DISABLED_BUTTON_BACKGROUND = "rgba(255,255,255,0.1)";
+
+// Shared keyframes style - injected once per document
+const SPINNER_KEYFRAMES = `@keyframes cc-balance-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+const KEYFRAMES_ATTR = "data-cc-spinner-keyframes";
+
+function injectSpinnerKeyframes() {
+  if (typeof document === "undefined") return;
+  // Check if already injected using a data attribute on the style element
+  if (document.querySelector(`style[${KEYFRAMES_ATTR}]`)) return;
+  const style = document.createElement("style");
+  style.setAttribute(KEYFRAMES_ATTR, "true");
+  style.textContent = SPINNER_KEYFRAMES;
+  document.head.appendChild(style);
+}
 
 // Chain icon with fallback
 function ChainIcon({
@@ -30,6 +50,11 @@ function ChainIcon({
   size?: number;
 }) {
   const [hasError, setHasError] = useState(false);
+
+  // Reset error state when chainConfig changes
+  useEffect(() => {
+    setHasError(false);
+  }, [chainConfig.iconUrl]);
 
   if (!chainConfig.iconUrl || hasError) {
     return (
@@ -66,6 +91,11 @@ function ChainIcon({
 
 // Small loading spinner for balance display
 function BalanceSpinner({ size = 12 }: { size?: number }) {
+  // Inject keyframes once on first render
+  useEffect(() => {
+    injectSpinnerKeyframes();
+  }, []);
+
   return (
     <svg
       width={size}
@@ -80,7 +110,6 @@ function BalanceSpinner({ size = 12 }: { size?: number }) {
       }}
       aria-hidden="true"
     >
-      <style>{`@keyframes cc-balance-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
       <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
     </svg>
@@ -117,8 +146,11 @@ function ChainSelector({
   const typeAheadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  const availableChains = chains.filter(
-    (c) => c.chain.id !== excludeChainId
+
+  // Memoize filtered chains to avoid recalculation on every render
+  const availableChains = useMemo(
+    () => chains.filter((c) => c.chain.id !== excludeChainId),
+    [chains, excludeChainId]
   );
 
   // Clear type-ahead timer on unmount
@@ -189,10 +221,10 @@ function ChainSelector({
           clearTimeout(typeAheadTimeoutRef.current);
         }
 
-        // Reset type-ahead after 1 second of inactivity
+        // Reset type-ahead after timeout
         typeAheadTimeoutRef.current = setTimeout(() => {
           setTypeAhead("");
-        }, 1000);
+        }, TYPE_AHEAD_RESET_MS);
 
         // Find matching chain
         const matchIndex = availableChains.findIndex((chain) =>
@@ -363,11 +395,11 @@ function ChainSelector({
               width: "100%",
               marginTop: "8px",
               borderRadius: `${theme.borderRadius}px`,
-              boxShadow: "0 10px 40px rgba(0,0,0,0.3)",
+              boxShadow: `0 10px 40px ${BOX_SHADOW_COLOR}`,
               background: theme.cardBackgroundColor,
               backdropFilter: "blur(10px)",
               border: `1px solid ${theme.borderColor}`,
-              maxHeight: "300px",
+              maxHeight: `${DROPDOWN_MAX_HEIGHT}px`,
               overflowY: "auto",
               overflowX: "hidden",
               padding: 0,
@@ -380,6 +412,8 @@ function ChainSelector({
               const chainBalance = balances?.[chainConfig.chain.id];
               const isFocused = index === focusedIndex;
               const isSelected = chainConfig.chain.id === selectedChain.chain.id;
+              // Pre-compute parsed balance to avoid parseFloat in render
+              const hasPositiveBalance = chainBalance ? parseFloat(chainBalance.formatted) > 0 : false;
 
               return (
                 <li
@@ -432,7 +466,7 @@ function ChainSelector({
                       <span
                         style={{
                           fontSize: "10px",
-                          color: parseFloat(chainBalance.formatted) > 0 ? theme.successColor : theme.mutedTextColor,
+                          color: hasPositiveBalance ? theme.successColor : theme.mutedTextColor,
                         }}
                       >
                         {formatNumber(chainBalance.formatted, 2)} USDC
@@ -705,7 +739,6 @@ export function BridgeWidget({
     const validation = validateChainConfigs(chains);
     if (!validation.isValid) {
       const errorMsg = validation.errors.join("; ");
-      console.error("[BridgeWidget] Invalid chain configuration:", errorMsg);
       setConfigError(errorMsg);
     } else {
       setConfigError(null);
@@ -741,28 +774,28 @@ export function BridgeWidget({
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const [error, setError] = useState<string | null>(null);
 
-  // Hooks - fetch balances for all chains
+  // Hooks - fetch balances for all chains (single batch request via multicall)
   const { balances: allBalances, isLoading: isLoadingAllBalances, refetch: refetchAllBalances } = useAllUSDCBalances(chains);
-  const { balanceFormatted, refetch: refetchBalance } = useUSDCBalance(
-    sourceChainConfig
-  );
+
+  // Derive source chain balance from the batch-fetched balances (no extra network request)
+  const balanceFormatted = useMemo(() => {
+    return allBalances[sourceChainConfig.chain.id]?.formatted ?? "0";
+  }, [allBalances, sourceChainConfig.chain.id]);
+
+  // Memoize parsed values to avoid repeated parsing
+  const parsedBalance = useMemo(() => parseFloat(balanceFormatted), [balanceFormatted]);
+  const parsedAmount = useMemo(() => parseFloat(amount) || 0, [amount]);
+
   const { needsApproval, approve, isApproving } = useUSDCAllowance(
     sourceChainConfig
   );
-
-  // Combined refetch for all balances
-  const refetchBalances = useCallback(() => {
-    refetchBalance();
-    refetchAllBalances();
-  }, [refetchBalance, refetchAllBalances]);
 
   // Refetch balances when wallet connects or address changes
   useEffect(() => {
     if (address) {
       refetchAllBalances();
-      refetchBalance();
     }
-  }, [address, refetchAllBalances, refetchBalance]);
+  }, [address, refetchAllBalances]);
 
   // Bridge hook
   const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
@@ -793,11 +826,11 @@ export function BridgeWidget({
 
   // Swap chains
   const handleSwapChains = useCallback(() => {
-    setSourceChainConfig((prev) => {
-      setDestChainConfig(prev);
-      return destChainConfig;
-    });
-  }, [destChainConfig]);
+    const newSource = destChainConfig;
+    const newDest = sourceChainConfig;
+    setSourceChainConfig(newSource);
+    setDestChainConfig(newDest);
+  }, [destChainConfig, sourceChainConfig]);
 
   // Handle max click
   const handleMaxClick = useCallback(() => {
@@ -815,7 +848,7 @@ export function BridgeWidget({
 
   // Handle bridge
   const handleBridge = useCallback(async () => {
-    if (!address || !amount || parseFloat(amount) <= 0) return;
+    if (!address || !amount || parsedAmount <= 0) return;
 
     setError(null);
     resetBridge();
@@ -856,6 +889,7 @@ export function BridgeWidget({
   }, [
     address,
     amount,
+    parsedAmount,
     needsApproval,
     approve,
     executeBridge,
@@ -899,7 +933,7 @@ export function BridgeWidget({
       const currentTxHash = bridgeState.txHash;
 
       setAmount("");
-      refetchBalances();
+      refetchAllBalances();
 
       if (currentTxHash) {
         onBridgeSuccessRef.current?.({
@@ -916,19 +950,19 @@ export function BridgeWidget({
     bridgeState.status,
     bridgeState.txHash,
     bridgeState.error,
-    refetchBalances,
+    refetchAllBalances,
     amount,
     sourceChainConfig.chain.id,
     destChainConfig.chain.id,
   ]);
 
-  // Computed disabled state
+  // Computed disabled state using memoized values
   const isButtonDisabled =
     !isConnected ||
     needsChainSwitch ||
     !amount ||
-    parseFloat(amount) <= 0 ||
-    parseFloat(amount) > parseFloat(balanceFormatted) ||
+    parsedAmount <= 0 ||
+    parsedAmount > parsedBalance ||
     isConfirming ||
     isApproving ||
     isBridging;
@@ -952,8 +986,8 @@ export function BridgeWidget({
       return "Approving...";
     }
 
-    if (!amount || parseFloat(amount) <= 0) return "Enter Amount";
-    if (parseFloat(amount) > parseFloat(balanceFormatted)) {
+    if (!amount || parsedAmount <= 0) return "Enter Amount";
+    if (parsedAmount > parsedBalance) {
       return "Insufficient Balance";
     }
     if (needsApproval(amount)) return "Approve & Bridge USDC";
@@ -966,7 +1000,8 @@ export function BridgeWidget({
     isConfirming,
     isApproving,
     amount,
-    balanceFormatted,
+    parsedAmount,
+    parsedBalance,
     needsApproval,
   ]);
 
@@ -1011,7 +1046,7 @@ export function BridgeWidget({
       transition: "all 0.2s",
       color: isButtonActuallyDisabled ? theme.mutedTextColor : theme.textColor,
       background: isButtonActuallyDisabled
-        ? "rgba(255,255,255,0.1)"
+        ? DISABLED_BUTTON_BACKGROUND
         : `linear-gradient(135deg, ${theme.primaryColor} 0%, ${theme.secondaryColor} 100%)`,
       boxShadow: isButtonActuallyDisabled
         ? "none"
@@ -1040,7 +1075,7 @@ export function BridgeWidget({
         padding: "16px",
         background: theme.backgroundColor,
         border: `1px solid ${theme.borderColor}`,
-        boxShadow: "0 4px 24px rgba(0,0,0,0.3)",
+        boxShadow: `0 4px 24px ${BOX_SHADOW_COLOR}`,
         ...style,
       }}
     >
