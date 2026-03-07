@@ -1,4 +1,5 @@
 import type { Chain } from "viem";
+import type { PendingBridgeRecord, PendingClaimRecord } from "./storage";
 
 /**
  * Theme configuration for the Bridge Widget.
@@ -144,6 +145,97 @@ export interface BridgeWidgetProps {
   className?: string;
   /** Custom inline styles to apply to the widget container */
   style?: React.CSSProperties;
+  /**
+   * Enable localStorage persistence for in-progress bridge transfers.
+   * When enabled, the widget saves bridge state so users can recover
+   * incomplete transfers after closing/reopening the page.
+   * @default true
+   */
+  enablePersistence?: boolean;
+  /**
+   * Callback fired when pending (incomplete) bridge records are detected
+   * in localStorage on widget mount. Useful for analytics or custom recovery UI.
+   */
+  onPendingBridgeDetected?: (bridges: PendingBridgeRecord[]) => void;
+  /**
+   * Callback fired when a recovery (retry) operation completes successfully.
+   */
+  onRecoveryComplete?: (params: {
+    sourceChainId: number;
+    destChainId: number;
+    amount: string;
+    txHash?: `0x${string}`;
+  }) => void;
+  /**
+   * Callback fired when a recovery (retry) operation fails.
+   */
+  onRecoveryError?: (error: Error) => void;
+  /**
+   * Show the Claim tab for manual USDC recovery.
+   * When true, a tab bar with "Bridge" and "Claim" tabs is displayed.
+   * @default true
+   */
+  showClaimTab?: boolean;
+  /**
+   * Show the Pending tab for tracking in-progress operations.
+   * Defaults to same value as showClaimTab.
+   */
+  showPendingTab?: boolean;
+  /**
+   * Callback fired when pending claim records are detected in localStorage.
+   */
+  onPendingClaimDetected?: (claims: PendingClaimRecord[]) => void;
+  /**
+   * Callback fired when a manual claim operation completes successfully.
+   */
+  onClaimSuccess?: (params: {
+    sourceChainId: number;
+    destChainId: number;
+    amount: string;
+    claimTxHash: `0x${string}`;
+  }) => void;
+  /**
+   * Callback fired when a manual claim operation fails.
+   */
+  onClaimError?: (error: Error) => void;
+}
+
+/**
+ * Status of a manual claim operation.
+ */
+export type ClaimStatus =
+  | "idle"
+  | "fetching-attestation"
+  | "attestation-pending"
+  | "attestation-ready"
+  | "claiming"
+  | "success"
+  | "error";
+
+/**
+ * State for a manual claim operation, tracking attestation fetch and receiveMessage call.
+ */
+export interface ClaimState {
+  /** Current status of the claim operation */
+  status: ClaimStatus;
+  /** Attestation data from Circle's Iris API */
+  attestation?: {
+    message: string;
+    attestation: string;
+    status: string;
+  };
+  /** Destination chain ID resolved from the attestation */
+  destinationChainId?: number;
+  /** Source chain ID where USDC was burned */
+  sourceChainId?: number;
+  /** Human-readable USDC amount (e.g., "99.00") */
+  formattedAmount?: string;
+  /** Mint recipient address on the destination chain */
+  mintRecipient?: string;
+  /** Transaction hash of the successful claim */
+  claimTxHash?: `0x${string}`;
+  /** Error message if the operation failed */
+  error?: string;
 }
 
 /**

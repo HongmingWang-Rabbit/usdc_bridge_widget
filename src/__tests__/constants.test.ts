@@ -8,6 +8,9 @@ import {
   MAX_USDC_AMOUNT,
   MIN_USDC_AMOUNT,
   DEFAULT_LOCALE,
+  CCTP_DOMAIN_IDS,
+  CCTP_DOMAIN_TO_CHAIN_ID,
+  MESSAGE_TRANSMITTER_V2_ADDRESS,
 } from "../constants";
 
 describe("USDC Constants", () => {
@@ -57,6 +60,29 @@ describe("Chain Icons", () => {
     Object.values(CHAIN_ICONS).forEach((url) => {
       expect(url).toMatch(/^https?:\/\/.+/);
     });
+  });
+});
+
+describe("CCTP Domain IDs", () => {
+  it("has domain IDs for all chains in USDC_ADDRESSES", () => {
+    Object.keys(USDC_ADDRESSES).forEach((chainId) => {
+      expect(CCTP_DOMAIN_IDS[Number(chainId)]).toBeDefined();
+    });
+  });
+
+  it("reverse mapping is correct for all entries", () => {
+    Object.entries(CCTP_DOMAIN_IDS).forEach(([chainIdStr, domainId]) => {
+      expect(CCTP_DOMAIN_TO_CHAIN_ID[domainId]).toBe(Number(chainIdStr));
+    });
+  });
+
+  it("all domain IDs are unique", () => {
+    const domainIds = Object.values(CCTP_DOMAIN_IDS);
+    expect(new Set(domainIds).size).toBe(domainIds.length);
+  });
+
+  it("MessageTransmitterV2 address is a valid hex address", () => {
+    expect(MESSAGE_TRANSMITTER_V2_ADDRESS).toMatch(/^0x[a-fA-F0-9]{40}$/);
   });
 });
 

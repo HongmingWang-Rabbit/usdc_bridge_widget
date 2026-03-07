@@ -8,726 +8,27 @@ import {
 } from "wagmi";
 import type {
   BridgeWidgetProps,
-  BridgeWidgetTheme,
   BridgeChainConfig,
 } from "./types";
 import { useUSDCAllowance, useAllUSDCBalances } from "./hooks";
 import { useBridge } from "./useBridge";
+import { useClaim } from "./useClaim";
+import { useRecovery } from "./useRecovery";
+import { useClaimManager } from "./useClaimManager";
+import { usePendingTab } from "./usePendingTab";
 import { DEFAULT_CHAIN_CONFIGS } from "./chains";
-import { USDC_BRAND_COLOR } from "./constants";
-import { formatNumber, getErrorMessage, validateAmountInput, validateChainConfigs } from "./utils";
+import { CCTP_DOMAIN_IDS, ATTESTATION_POLL_INTERVAL_MS } from "./constants";
+import { getErrorMessage, validateChainConfigs } from "./utils";
 import { mergeTheme } from "./theme";
-import { ChevronDownIcon, SwapIcon } from "./icons";
-
-// Constants
-const TYPE_AHEAD_RESET_MS = 1000;
-const DROPDOWN_MAX_HEIGHT = 300;
-const BOX_SHADOW_COLOR = "rgba(0,0,0,0.3)";
-const DISABLED_BUTTON_BACKGROUND = "rgba(255,255,255,0.1)";
-
-// Helper function for borderless styles
-function getBorderlessStyles(
-  borderless: boolean | undefined,
-  theme: Required<BridgeWidgetTheme>,
-  options?: { includeBoxShadow?: boolean; useBackgroundColor?: boolean }
-) {
-  const bgColor = options?.useBackgroundColor
-    ? theme.backgroundColor
-    : theme.cardBackgroundColor;
-
-  return {
-    borderRadius: borderless ? 0 : `${theme.borderRadius}px`,
-    background: borderless ? "transparent" : bgColor,
-    border: borderless ? "none" : `1px solid ${theme.borderColor}`,
-    ...(options?.includeBoxShadow && {
-      boxShadow: borderless ? "none" : `0 4px 24px ${BOX_SHADOW_COLOR}`,
-    }),
-  };
-}
-
-// Shared keyframes style - injected once per document
-const SPINNER_KEYFRAMES = `@keyframes cc-balance-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
-const KEYFRAMES_ATTR = "data-cc-spinner-keyframes";
-
-function injectSpinnerKeyframes() {
-  if (typeof document === "undefined") return;
-  // Check if already injected using a data attribute on the style element
-  if (document.querySelector(`style[${KEYFRAMES_ATTR}]`)) return;
-  const style = document.createElement("style");
-  style.setAttribute(KEYFRAMES_ATTR, "true");
-  style.textContent = SPINNER_KEYFRAMES;
-  document.head.appendChild(style);
-}
-
-// Chain icon with fallback
-function ChainIcon({
-  chainConfig,
-  theme,
-  size = 24,
-}: {
-  chainConfig: BridgeChainConfig;
-  theme: Required<BridgeWidgetTheme>;
-  size?: number;
-}) {
-  const [hasError, setHasError] = useState(false);
-
-  // Reset error state when chainConfig changes
-  useEffect(() => {
-    setHasError(false);
-  }, [chainConfig.iconUrl]);
-
-  if (!chainConfig.iconUrl || hasError) {
-    return (
-      <div
-        style={{
-          width: `${size}px`,
-          height: `${size}px`,
-          borderRadius: "50%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: `${size * 0.5}px`,
-          fontWeight: "bold",
-          color: theme.textColor,
-          background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.secondaryColor})`,
-        }}
-        aria-hidden="true"
-      >
-        {chainConfig.chain.name.charAt(0)}
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={chainConfig.iconUrl}
-      alt=""
-      aria-hidden="true"
-      style={{ width: `${size}px`, height: `${size}px`, borderRadius: "50%" }}
-      onError={() => setHasError(true)}
-    />
-  );
-}
-
-// Small loading spinner for balance display
-function BalanceSpinner({ size = 12 }: { size?: number }) {
-  // Inject keyframes once on first render
-  useEffect(() => {
-    injectSpinnerKeyframes();
-  }, []);
-
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      style={{
-        animation: "cc-balance-spin 1s linear infinite",
-        opacity: 0.6,
-      }}
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-      <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-// Chain Selector Component
-function ChainSelector({
-  label,
-  chains,
-  selectedChain,
-  onSelect,
-  excludeChainId,
-  theme,
-  id,
-  balances,
-  isLoadingBalances,
-  disabled,
-  borderless,
-}: {
-  label: string;
-  chains: BridgeChainConfig[];
-  selectedChain: BridgeChainConfig;
-  onSelect: (chain: BridgeChainConfig) => void;
-  excludeChainId?: number;
-  theme: Required<BridgeWidgetTheme>;
-  id: string;
-  balances?: Record<number, { balance: bigint; formatted: string }>;
-  isLoadingBalances?: boolean;
-  disabled?: boolean;
-  borderless?: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [focusedIndex, setFocusedIndex] = useState(-1);
-  const [typeAhead, setTypeAhead] = useState("");
-  const typeAheadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-
-  // Memoize filtered chains to avoid recalculation on every render
-  const availableChains = useMemo(
-    () => chains.filter((c) => c.chain.id !== excludeChainId),
-    [chains, excludeChainId]
-  );
-
-  // Clear type-ahead timer on unmount
-  useEffect(() => {
-    return () => {
-      if (typeAheadTimeoutRef.current) {
-        clearTimeout(typeAheadTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Handle keyboard navigation on button
-  const handleButtonKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setIsOpen(false);
-        buttonRef.current?.focus();
-      } else if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
-        if (!isOpen) {
-          e.preventDefault();
-          setIsOpen(true);
-          setFocusedIndex(0);
-        }
-      }
-    },
-    [isOpen]
-  );
-
-  // Handle keyboard navigation in listbox with type-ahead search
-  const handleListKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setIsOpen(false);
-        setTypeAhead("");
-        buttonRef.current?.focus();
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setFocusedIndex((prev) =>
-          prev < availableChains.length - 1 ? prev + 1 : 0
-        );
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setFocusedIndex((prev) =>
-          prev > 0 ? prev - 1 : availableChains.length - 1
-        );
-      } else if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        if (focusedIndex >= 0 && focusedIndex < availableChains.length) {
-          onSelect(availableChains[focusedIndex]);
-          setIsOpen(false);
-          setTypeAhead("");
-          buttonRef.current?.focus();
-        }
-      } else if (e.key === "Home") {
-        e.preventDefault();
-        setFocusedIndex(0);
-      } else if (e.key === "End") {
-        e.preventDefault();
-        setFocusedIndex(availableChains.length - 1);
-      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        // Type-ahead search
-        e.preventDefault();
-        const newTypeAhead = typeAhead + e.key.toLowerCase();
-        setTypeAhead(newTypeAhead);
-
-        // Clear previous timeout
-        if (typeAheadTimeoutRef.current) {
-          clearTimeout(typeAheadTimeoutRef.current);
-        }
-
-        // Reset type-ahead after timeout
-        typeAheadTimeoutRef.current = setTimeout(() => {
-          setTypeAhead("");
-        }, TYPE_AHEAD_RESET_MS);
-
-        // Find matching chain
-        const matchIndex = availableChains.findIndex((chain) =>
-          chain.chain.name.toLowerCase().startsWith(newTypeAhead)
-        );
-        if (matchIndex !== -1) {
-          setFocusedIndex(matchIndex);
-        }
-      }
-    },
-    [availableChains, focusedIndex, onSelect, typeAhead]
-  );
-
-  // Focus the list when opened
-  useEffect(() => {
-    if (isOpen && listRef.current) {
-      listRef.current.focus();
-    }
-  }, [isOpen]);
-
-  // Close on escape key globally when open
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setIsOpen(false);
-        setTypeAhead("");
-        buttonRef.current?.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleGlobalKeyDown);
-    return () => document.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [isOpen]);
-
-  // Reset type-ahead when dropdown closes
-  useEffect(() => {
-    if (!isOpen) {
-      setTypeAhead("");
-      if (typeAheadTimeoutRef.current) {
-        clearTimeout(typeAheadTimeoutRef.current);
-        typeAheadTimeoutRef.current = null;
-      }
-    }
-  }, [isOpen]);
-
-  const buttonId = `${id}-button`;
-  const listboxId = `${id}-listbox`;
-
-  // Get selected chain balance
-  const selectedBalance = balances?.[selectedChain.chain.id];
-
-  return (
-    <div style={{ position: "relative", flex: 1 }}>
-      <label
-        id={`${id}-label`}
-        htmlFor={buttonId}
-        style={{
-          display: "block",
-          fontSize: "10px",
-          color: theme.mutedTextColor,
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-          fontWeight: 500,
-          marginBottom: "4px",
-        }}
-      >
-        {label}
-      </label>
-      <button
-        ref={buttonRef}
-        id={buttonId}
-        onClick={() => !disabled && setIsOpen(!isOpen)}
-        onKeyDown={disabled ? undefined : handleButtonKeyDown}
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        aria-labelledby={`${id}-label`}
-        aria-controls={isOpen ? listboxId : undefined}
-        aria-disabled={disabled}
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 12px",
-          ...getBorderlessStyles(borderless, theme),
-          cursor: disabled ? "not-allowed" : "pointer",
-          opacity: disabled ? 0.6 : 1,
-          transition: "all 0.2s",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <ChainIcon chainConfig={selectedChain} theme={theme} />
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-            <span
-              style={{
-                fontSize: "14px",
-                fontWeight: 500,
-                color: theme.textColor,
-              }}
-            >
-              {selectedChain.chain.name}
-            </span>
-            {isLoadingBalances ? (
-              <span
-                style={{
-                  fontSize: "10px",
-                  color: theme.mutedTextColor,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                }}
-              >
-                <BalanceSpinner size={10} /> Loading...
-              </span>
-            ) : balances && selectedBalance ? (
-              <span
-                style={{
-                  fontSize: "10px",
-                  color: theme.mutedTextColor,
-                }}
-              >
-                {formatNumber(selectedBalance.formatted, 2)} USDC
-              </span>
-            ) : null}
-          </div>
-        </div>
-        <ChevronDownIcon
-          size={16}
-          color={theme.mutedTextColor}
-          style={{
-            transition: "transform 0.2s",
-            transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
-          }}
-        />
-      </button>
-
-      {isOpen && (
-        <>
-          <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 10,
-            }}
-            onClick={() => setIsOpen(false)}
-            aria-hidden="true"
-          />
-          <ul
-            ref={listRef}
-            id={listboxId}
-            role="listbox"
-            aria-labelledby={`${id}-label`}
-            aria-activedescendant={
-              focusedIndex >= 0
-                ? `${id}-option-${availableChains[focusedIndex]?.chain.id}`
-                : undefined
-            }
-            tabIndex={0}
-            onKeyDown={handleListKeyDown}
-            style={{
-              position: "absolute",
-              zIndex: 20,
-              width: "100%",
-              marginTop: "8px",
-              borderRadius: `${theme.borderRadius}px`,
-              boxShadow: `0 10px 40px ${BOX_SHADOW_COLOR}`,
-              background: theme.cardBackgroundColor,
-              backdropFilter: "blur(10px)",
-              border: `1px solid ${theme.borderColor}`,
-              maxHeight: `${DROPDOWN_MAX_HEIGHT}px`,
-              overflowY: "auto",
-              overflowX: "hidden",
-              padding: 0,
-              margin: 0,
-              listStyle: "none",
-              outline: "none",
-            }}
-          >
-            {availableChains.map((chainConfig, index) => {
-              const chainBalance = balances?.[chainConfig.chain.id];
-              const isFocused = index === focusedIndex;
-              const isSelected = chainConfig.chain.id === selectedChain.chain.id;
-              // Pre-compute parsed balance to avoid parseFloat in render
-              const hasPositiveBalance = chainBalance ? parseFloat(chainBalance.formatted) > 0 : false;
-
-              return (
-                <li
-                  key={chainConfig.chain.id}
-                  id={`${id}-option-${chainConfig.chain.id}`}
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => {
-                    onSelect(chainConfig);
-                    setIsOpen(false);
-                    buttonRef.current?.focus();
-                  }}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    padding: "10px 12px",
-                    background: isFocused ? theme.hoverColor : "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    transition: "background 0.2s",
-                  }}
-                  onMouseEnter={() => setFocusedIndex(index)}
-                >
-                  <ChainIcon chainConfig={chainConfig} theme={theme} />
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                    <span
-                      style={{
-                        fontSize: "14px",
-                        color: isSelected ? theme.textColor : theme.mutedTextColor,
-                        fontWeight: isSelected ? 500 : 400,
-                      }}
-                    >
-                      {chainConfig.chain.name}
-                    </span>
-                    {isLoadingBalances ? (
-                      <span
-                        style={{
-                          fontSize: "10px",
-                          color: theme.mutedTextColor,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "4px",
-                        }}
-                      >
-                        <BalanceSpinner size={10} />
-                      </span>
-                    ) : balances && chainBalance ? (
-                      <span
-                        style={{
-                          fontSize: "10px",
-                          color: hasPositiveBalance ? theme.successColor : theme.mutedTextColor,
-                        }}
-                      >
-                        {formatNumber(chainBalance.formatted, 2)} USDC
-                      </span>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
-    </div>
-  );
-}
-
-// Swap Button Component
-function SwapButton({
-  onClick,
-  theme,
-  disabled,
-}: {
-  onClick: () => void;
-  theme: Required<BridgeWidgetTheme>;
-  disabled?: boolean;
-}) {
-  const [isHovered, setIsHovered] = useState(false);
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      aria-label="Swap source and destination chains"
-      style={{
-        padding: "8px",
-        borderRadius: `${theme.borderRadius}px`,
-        background: `${theme.primaryColor}15`,
-        border: `1px solid ${theme.primaryColor}40`,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        transition: "all 0.2s",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        alignSelf: "flex-end",
-        marginBottom: "4px",
-        transform: isHovered && !disabled ? "scale(1.1)" : "scale(1)",
-      }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <SwapIcon size={20} color={theme.primaryColor} />
-    </button>
-  );
-}
-
-// Amount Input Component
-function AmountInput({
-  value,
-  onChange,
-  balance,
-  onMaxClick,
-  theme,
-  id,
-  disabled,
-  showBalance = true,
-  borderless,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  balance: string;
-  onMaxClick: () => void;
-  theme: Required<BridgeWidgetTheme>;
-  id: string;
-  disabled?: boolean;
-  showBalance?: boolean;
-  borderless?: boolean;
-}) {
-  const inputId = `${id}-input`;
-  const labelId = `${id}-label`;
-
-  // Handle input change with comprehensive validation
-  const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (disabled) return;
-      const result = validateAmountInput(e.target.value);
-      if (result.isValid) {
-        onChange(result.sanitized);
-      } else if (result.sanitized) {
-        // Use sanitized value (e.g., truncated decimals)
-        onChange(result.sanitized);
-      }
-      // Invalid input is rejected silently
-    },
-    [onChange, disabled]
-  );
-
-  // Prevent 'e' key from being entered
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "e" || e.key === "E" || e.key === "+" || e.key === "-") {
-      e.preventDefault();
-    }
-  }, []);
-
-  return (
-    <div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: "4px",
-        }}
-      >
-        <label
-          id={labelId}
-          htmlFor={inputId}
-          style={{
-            fontSize: "10px",
-            color: theme.mutedTextColor,
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-            fontWeight: 500,
-          }}
-        >
-          Amount
-        </label>
-        {showBalance && (
-          <span
-            style={{ fontSize: "10px", color: theme.mutedTextColor }}
-            aria-live="polite"
-          >
-            Balance:{" "}
-            <span style={{ color: theme.textColor }}>
-              {formatNumber(balance)} USDC
-            </span>
-          </span>
-        )}
-      </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          overflow: "hidden",
-          ...getBorderlessStyles(borderless, theme),
-          opacity: disabled ? 0.6 : 1,
-        }}
-      >
-        <input
-          id={inputId}
-          type="text"
-          inputMode="decimal"
-          pattern="[0-9]*\.?[0-9]*"
-          value={value}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          placeholder="0.00"
-          disabled={disabled}
-          aria-labelledby={labelId}
-          aria-describedby={`${id}-currency`}
-          aria-disabled={disabled}
-          style={{
-            flex: 1,
-            background: "transparent",
-            border: "none",
-            padding: "12px",
-            fontSize: "18px",
-            color: theme.textColor,
-            fontWeight: 500,
-            outline: "none",
-            minWidth: 0,
-            fontFamily: theme.fontFamily,
-            cursor: disabled ? "not-allowed" : "text",
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            paddingRight: "12px",
-          }}
-        >
-          <button
-            onClick={onMaxClick}
-            disabled={disabled}
-            aria-label="Set maximum amount"
-            style={{
-              padding: "4px 8px",
-              fontSize: "10px",
-              fontWeight: 600,
-              borderRadius: "4px",
-              background: `${theme.primaryColor}20`,
-              color: theme.primaryColor,
-              border: "none",
-              cursor: disabled ? "not-allowed" : "pointer",
-              opacity: disabled ? 0.5 : 1,
-            }}
-          >
-            MAX
-          </button>
-          <div
-            id={`${id}-currency`}
-            style={{ display: "flex", alignItems: "center", gap: "4px" }}
-          >
-            <div
-              style={{
-                width: "20px",
-                height: "20px",
-                borderRadius: "50%",
-                background: USDC_BRAND_COLOR,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-              aria-hidden="true"
-            >
-              <span
-                style={{
-                  fontSize: "10px",
-                  fontWeight: "bold",
-                  color: "#fff",
-                }}
-              >
-                $
-              </span>
-            </div>
-            <span
-              style={{
-                fontSize: "14px",
-                fontWeight: 500,
-                color: theme.textColor,
-              }}
-            >
-              USDC
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+import { SpinnerIcon, CheckIcon, SearchIcon } from "./icons";
+import { getBorderlessStyles, getChainNameFromConfigs, DISABLED_BUTTON_BACKGROUND } from "./widgetUtils";
+import { ChainSelector } from "./components/ChainSelector";
+import { SwapButton } from "./components/SwapButton";
+import { AmountInput } from "./components/AmountInput";
+import { BridgeProgress, BRIDGE_FLOW_STATUSES, isBridgeStepKey } from "./components/BridgeProgress";
+import type { BridgeStepKey } from "./components/BridgeProgress";
+import { RecoveryBanner } from "./components/RecoveryBanner";
+import { PendingItemCard } from "./components/PendingItemCard";
 
 // Main Bridge Widget Component
 export function BridgeWidget({
@@ -742,6 +43,15 @@ export function BridgeWidget({
   borderless = false,
   className,
   style,
+  enablePersistence = true,
+  onPendingBridgeDetected,
+  onRecoveryComplete,
+  onRecoveryError,
+  showClaimTab = true,
+  showPendingTab: showPendingTabProp,
+  onPendingClaimDetected,
+  onClaimSuccess,
+  onClaimError,
 }: BridgeWidgetProps) {
   const theme = mergeTheme(themeOverrides);
   const { address, isConnected, status } = useAccount();
@@ -750,6 +60,76 @@ export function BridgeWidget({
 
   // Detect reconnecting/connecting states to prevent UI flicker
   const isReconnecting = status === "reconnecting" || status === "connecting";
+
+  // Derive showPendingTab — defaults to showClaimTab
+  const showPendingTab = showPendingTabProp ?? showClaimTab;
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<"bridge" | "claim" | "pending">("bridge");
+
+  // Claim manager hook for multi-claim persistence
+  const {
+    pendingClaims: managerClaims,
+    addClaim,
+    executeClaim: executeClaimFromManager,
+    dismissClaim,
+    resumePolling,
+    activeClaimId,
+  } = useClaimManager({
+    enabled: enablePersistence,
+    onClaimSuccess,
+    onClaimError,
+    onPendingClaimDetected,
+  });
+
+  // Ref for resetClaim — allows handleAttestationReady to call it without circular deps
+  const resetClaimRef = useRef<() => void>(() => {});
+
+  // Callback when attestation is ready on the Claim tab — persist and reset form
+  const handleAttestationReady = useCallback(
+    (params: {
+      sourceChainId: number;
+      destinationChainId: number;
+      burnTxHash: string;
+      amount: string;
+      attestation: { message: string; attestation: string; status: string };
+      mintRecipient: string;
+    }) => {
+      if (!address) return;
+      addClaim({
+        walletAddress: address.toLowerCase(),
+        sourceChainId: params.sourceChainId,
+        destinationChainId: params.destinationChainId,
+        burnTxHash: params.burnTxHash,
+        amount: params.amount,
+        attestation: params.attestation,
+        mintRecipient: params.mintRecipient,
+        status: "attestation-ready",
+      });
+      // Reset claim form for next lookup and switch to Pending tab
+      resetClaimRef.current();
+      setClaimTxHashInput("");
+      setActiveTab("pending");
+    },
+    [address, addClaim]
+  );
+
+  // Claim hook (for the Claim tab form)
+  const {
+    state: claimState,
+    fetchAttestation,
+    claim: executeClaim,
+    reset: resetClaim,
+  } = useClaim({ onClaimSuccess, onClaimError, onAttestationReady: handleAttestationReady });
+
+  // Keep ref in sync
+  resetClaimRef.current = resetClaim;
+
+  // Claim tab state
+  const [claimSourceChainId, setClaimSourceChainId] = useState<number>(
+    () => chains[0]?.chain.id ?? 1
+  );
+  const [claimTxHashInput, setClaimTxHashInput] = useState("");
 
   // Validate chain configs on mount/change
   const [configError, setConfigError] = useState<string | null>(null);
@@ -808,8 +188,40 @@ export function BridgeWidget({
     sourceChainConfig
   );
 
-  // Bridge hook
-  const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge();
+  // Build persistence config for useBridge
+  const persistenceConfig = useMemo(() => {
+    if (!enablePersistence || !address) return undefined;
+    return {
+      walletAddress: address,
+      sourceChainId: sourceChainConfig.chain.id,
+      destChainId: destChainConfig.chain.id,
+    };
+  }, [enablePersistence, address, sourceChainConfig.chain.id, destChainConfig.chain.id]);
+
+  // Bridge hook with persistence
+  const { bridge: executeBridge, state: bridgeState, reset: resetBridge } = useBridge(persistenceConfig);
+
+  // Recovery hook for incomplete bridges
+  const {
+    pendingBridges,
+    retryBridge,
+    dismissBridge,
+    isRecovering,
+    lastError: recoveryError,
+    lastSuccess: recoverySuccess,
+    refresh: refreshRecovery,
+  } = useRecovery({
+    enabled: enablePersistence,
+    onRecoveryComplete,
+    onRecoveryError,
+    onPendingBridgeDetected,
+  });
+
+  // Pending tab aggregator
+  const { items: pendingItems, actionableCount } = usePendingTab(
+    pendingBridges,
+    managerClaims
+  );
 
   // Refetch balances on wallet connection events
   useAccountEffect({
@@ -829,12 +241,18 @@ export function BridgeWidget({
     hash: txHash,
   });
 
-  // Bridge operation states
-  const isBridging = bridgeState.status === "loading" ||
-    bridgeState.status === "approving" ||
-    bridgeState.status === "burning" ||
-    bridgeState.status === "fetching-attestation" ||
-    bridgeState.status === "minting";
+  // Bridge operation states — derived from BRIDGE_FLOW_STATUSES to prevent divergence
+  const isBridging = BRIDGE_FLOW_STATUSES.has(bridgeState.status);
+
+  // Track the last active step so progress stepper can show which step failed on error
+  const lastActiveStepRef = useRef<BridgeStepKey | undefined>(undefined);
+  useEffect(() => {
+    if (isBridgeStepKey(bridgeState.status)) {
+      lastActiveStepRef.current = bridgeState.status;
+    } else if (bridgeState.status === "idle") {
+      lastActiveStepRef.current = undefined;
+    }
+  }, [bridgeState.status]);
 
   // Disable inputs when any operation is pending to prevent race conditions
   const isOperationPending = isBridging || isConfirming || isApproving;
@@ -981,6 +399,25 @@ export function BridgeWidget({
     destChainConfig.chain.id,
   ]);
 
+  // Warn users before closing the tab during active bridging
+  useEffect(() => {
+    if (!isBridging) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isBridging]);
+
+  // Refresh recovery list after a bridge completes or fails
+  useEffect(() => {
+    if ((bridgeState.status === "success" || bridgeState.status === "error") && enablePersistence) {
+      refreshRecovery();
+    }
+  }, [bridgeState.status, enablePersistence, refreshRecovery]);
+
   // Computed disabled state using memoized values
   const isButtonDisabled =
     !isConnected ||
@@ -1095,6 +532,49 @@ export function BridgeWidget({
     ]
   );
 
+  // Claim-specific chain config for the ChainSelector
+  const claimSourceChainConfig = useMemo(
+    () => chains.find((c) => c.chain.id === claimSourceChainId) ?? chains[0],
+    [chains, claimSourceChainId]
+  );
+
+  // Filter chains to only those with CCTP domain IDs (for claim tab)
+  const claimChains = useMemo(
+    () => chains.filter((c) => CCTP_DOMAIN_IDS[c.chain.id] !== undefined),
+    [chains]
+  );
+
+  const handleFetchAttestation = useCallback(async () => {
+    await fetchAttestation(claimSourceChainId, claimTxHashInput.trim());
+  }, [fetchAttestation, claimSourceChainId, claimTxHashInput]);
+
+  const handleClaimReset = useCallback(() => {
+    resetClaim();
+    setClaimTxHashInput("");
+  }, [resetClaim]);
+
+  // Derive claim button text and state
+  const claimButtonInfo = useMemo(() => {
+    if (isReconnecting) return { text: "Connecting...", disabled: true };
+    if (!isConnected) return { text: "Connect Wallet", disabled: false };
+    if (claimState.status === "claiming") return { text: "Claiming...", disabled: true };
+    if (claimState.status !== "attestation-ready") return { text: "Claim USDC", disabled: true };
+    if (claimState.destinationChainId && currentChainId !== claimState.destinationChainId) {
+      const destName = getChainNameFromConfigs(claimState.destinationChainId, chains);
+      return { text: `Switch to ${destName}`, disabled: false };
+    }
+    return { text: "Claim USDC", disabled: false };
+  }, [isReconnecting, isConnected, claimState.status, claimState.destinationChainId, currentChainId, chains]);
+
+  const handleClaimButtonClick = useCallback(() => {
+    if (isReconnecting) return;
+    if (!isConnected) {
+      onConnectWallet?.();
+      return;
+    }
+    void executeClaim();
+  }, [isReconnecting, isConnected, onConnectWallet, executeClaim]);
+
   return (
     <div
       className={className}
@@ -1112,102 +592,659 @@ export function BridgeWidget({
         ...style,
       }}
     >
-      {/* Chain Selectors */}
+      {/* Tab Bar */}
+      {(showClaimTab || showPendingTab) && (
+        <div
+          role="tablist"
+          aria-label="Widget mode"
+          style={{
+            display: "flex",
+            marginBottom: "16px",
+            borderBottom: `1px solid ${theme.borderColor}`,
+          }}
+        >
+          <button
+            role="tab"
+            aria-selected={activeTab === "bridge"}
+            aria-controls={`${baseId}-bridge-panel`}
+            id={`${baseId}-bridge-tab`}
+            onClick={() => setActiveTab("bridge")}
+            style={{
+              flex: 1,
+              padding: "10px 16px",
+              fontSize: "13px",
+              fontWeight: 600,
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "bridge"
+                ? `2px solid ${theme.primaryColor}`
+                : "2px solid transparent",
+              color: activeTab === "bridge" ? theme.primaryColor : theme.mutedTextColor,
+              cursor: "pointer",
+              transition: "all 0.2s",
+            }}
+          >
+            Bridge
+          </button>
+          {showClaimTab && (
+            <button
+              role="tab"
+              aria-selected={activeTab === "claim"}
+              aria-controls={`${baseId}-claim-panel`}
+              id={`${baseId}-claim-tab`}
+              onClick={() => setActiveTab("claim")}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                fontSize: "13px",
+                fontWeight: 600,
+                background: "transparent",
+                border: "none",
+                borderBottom: activeTab === "claim"
+                  ? `2px solid ${theme.primaryColor}`
+                  : "2px solid transparent",
+                color: activeTab === "claim" ? theme.primaryColor : theme.mutedTextColor,
+                cursor: "pointer",
+                transition: "all 0.2s",
+              }}
+            >
+              Claim
+            </button>
+          )}
+          {showPendingTab && (
+            <button
+              role="tab"
+              aria-selected={activeTab === "pending"}
+              aria-controls={`${baseId}-pending-panel`}
+              id={`${baseId}-pending-tab`}
+              onClick={() => setActiveTab("pending")}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                fontSize: "13px",
+                fontWeight: 600,
+                background: "transparent",
+                border: "none",
+                borderBottom: activeTab === "pending"
+                  ? `2px solid ${theme.primaryColor}`
+                  : "2px solid transparent",
+                color: activeTab === "pending" ? theme.primaryColor : theme.mutedTextColor,
+                cursor: "pointer",
+                transition: "all 0.2s",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "6px",
+              }}
+            >
+              Pending
+              {actionableCount > 0 && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: "18px",
+                    height: "18px",
+                    borderRadius: "9px",
+                    background: theme.primaryColor,
+                    color: "#fff",
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    padding: "0 5px",
+                    lineHeight: 1,
+                  }}
+                  aria-label={`${actionableCount} pending`}
+                >
+                  {actionableCount}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Bridge Tab */}
+      {activeTab === "bridge" && (
+        <div
+          role="tabpanel"
+          id={`${baseId}-bridge-panel`}
+          aria-labelledby={`${baseId}-bridge-tab`}
+        >
+          {/* Recovery Banner - shown when there are incomplete bridges */}
+          {!isBridging && (
+            <RecoveryBanner
+              pendingBridges={pendingBridges}
+              onResume={retryBridge}
+              onDismiss={dismissBridge}
+              isRecovering={isRecovering}
+              lastError={recoveryError}
+              lastSuccess={recoverySuccess}
+              theme={theme}
+              chains={chains}
+            />
+          )}
+
+          {/* Chain Selectors */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-end",
+              gap: "12px",
+              marginBottom: "16px",
+            }}
+          >
+            <ChainSelector
+              id={sourceChainId}
+              label="From"
+              chains={chains}
+              selectedChain={sourceChainConfig}
+              onSelect={setSourceChainConfig}
+              excludeChainId={destChainConfig.chain.id}
+              theme={theme}
+              balances={isConnected ? allBalances : undefined}
+              isLoadingBalances={isConnected && isLoadingAllBalances}
+              disabled={isOperationPending}
+              borderless={borderless}
+            />
+            <SwapButton onClick={handleSwapChains} theme={theme} disabled={isOperationPending} />
+            <ChainSelector
+              id={destChainId}
+              label="To"
+              chains={chains}
+              selectedChain={destChainConfig}
+              onSelect={setDestChainConfig}
+              excludeChainId={sourceChainConfig.chain.id}
+              theme={theme}
+              balances={isConnected ? allBalances : undefined}
+              isLoadingBalances={isConnected && isLoadingAllBalances}
+              disabled={isOperationPending}
+              borderless={borderless}
+            />
+          </div>
+
+          {/* Amount Input */}
+          <div style={{ marginBottom: "16px" }}>
+            <AmountInput
+              id={amountId}
+              value={amount}
+              onChange={setAmount}
+              balance={balanceFormatted}
+              onMaxClick={handleMaxClick}
+              theme={theme}
+              disabled={isOperationPending}
+              showBalance={isConnected}
+              borderless={borderless}
+            />
+          </div>
+
+          {/* Config Error */}
+          {configError && (
+            <div
+              role="alert"
+              style={{
+                fontSize: "12px",
+                color: theme.errorColor,
+                background: `${theme.errorColor}15`,
+                padding: "8px 12px",
+                borderRadius: `${theme.borderRadius}px`,
+                marginBottom: "16px",
+              }}
+            >
+              Configuration Error: {configError}
+            </div>
+          )}
+
+          {/* Error */}
+          {error && !configError && (
+            <div
+              role="alert"
+              style={{
+                fontSize: "12px",
+                color: theme.errorColor,
+                background: `${theme.errorColor}15`,
+                padding: "8px 12px",
+                borderRadius: `${theme.borderRadius}px`,
+                marginBottom: "16px",
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          {/* Bridge Progress Stepper */}
+          <BridgeProgress bridgeStatus={bridgeState.status} lastActiveStep={lastActiveStepRef.current} theme={theme} />
+
+          {/* Action Button */}
+          <button
+            onClick={handleButtonClick}
+            disabled={isButtonActuallyDisabled}
+            aria-busy={isConfirming || isApproving || isBridging}
+            style={buttonStyles}
+          >
+            {buttonText}
+          </button>
+        </div>
+      )}
+
+      {/* Claim Tab */}
+      {activeTab === "claim" && (
+        <div
+          role="tabpanel"
+          id={`${baseId}-claim-panel`}
+          aria-labelledby={`${baseId}-claim-tab`}
+        >
+          {/* Description */}
+          <div
+            style={{
+              fontSize: "12px",
+              color: theme.mutedTextColor,
+              marginBottom: "16px",
+              lineHeight: 1.5,
+            }}
+          >
+            Recover unclaimed USDC from a CCTP burn transaction. Paste the burn tx hash to fetch the attestation and claim your USDC on the destination chain.
+          </div>
+
+          {/* Source Chain Selector */}
+          {(claimState.status === "idle" || claimState.status === "error") ? (
+            <>
+              <div style={{ marginBottom: "16px" }}>
+                <ChainSelector
+                  id={`${baseId}-claim-source`}
+                  label="Source Chain (where you burned)"
+                  chains={claimChains}
+                  selectedChain={claimSourceChainConfig}
+                  onSelect={(c) => setClaimSourceChainId(c.chain.id)}
+                  theme={theme}
+                  borderless={borderless}
+                />
+              </div>
+
+              {/* Tx Hash Input */}
+              <div style={{ marginBottom: "16px" }}>
+                <label
+                  htmlFor={`${baseId}-claim-txhash`}
+                  style={{
+                    display: "block",
+                    fontSize: "10px",
+                    color: theme.mutedTextColor,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    fontWeight: 500,
+                    marginBottom: "4px",
+                  }}
+                >
+                  Burn Transaction Hash
+                </label>
+                <input
+                  id={`${baseId}-claim-txhash`}
+                  type="text"
+                  value={claimTxHashInput}
+                  onChange={(e) => setClaimTxHashInput(e.target.value)}
+                  placeholder="0x..."
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    fontSize: "13px",
+                    fontFamily: "monospace",
+                    color: theme.textColor,
+                    ...getBorderlessStyles(borderless, theme),
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+
+              {/* Claim Error */}
+              {claimState.status === "error" && claimState.error && (
+                <div
+                  role="alert"
+                  style={{
+                    fontSize: "12px",
+                    color: theme.errorColor,
+                    background: `${theme.errorColor}15`,
+                    padding: "8px 12px",
+                    borderRadius: `${theme.borderRadius}px`,
+                    marginBottom: "16px",
+                  }}
+                >
+                  {claimState.error}
+                </div>
+              )}
+
+              {/* Fetch Attestation Button */}
+              <button
+                onClick={handleFetchAttestation}
+                disabled={!claimTxHashInput.trim()}
+                style={{
+                  width: "100%",
+                  padding: "14px",
+                  borderRadius: `${theme.borderRadius}px`,
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: !claimTxHashInput.trim() ? "not-allowed" : "pointer",
+                  color: !claimTxHashInput.trim() ? theme.mutedTextColor : theme.textColor,
+                  background: !claimTxHashInput.trim()
+                    ? DISABLED_BUTTON_BACKGROUND
+                    : `linear-gradient(135deg, ${theme.primaryColor} 0%, ${theme.secondaryColor} 100%)`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                }}
+              >
+                <SearchIcon size={16} />
+                Fetch Attestation
+              </button>
+            </>
+          ) : null}
+
+          {/* Fetching / Polling state */}
+          {(claimState.status === "fetching-attestation" || claimState.status === "attestation-pending") && (
+            <div
+              style={{
+                padding: "16px",
+                borderRadius: `${theme.borderRadius}px`,
+                background: theme.cardBackgroundColor,
+                border: `1px solid ${theme.borderColor}`,
+                textAlign: "center",
+              }}
+            >
+              <SpinnerIcon size={24} color={theme.primaryColor} />
+              <div
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: theme.textColor,
+                  marginTop: "8px",
+                }}
+              >
+                {claimState.status === "fetching-attestation"
+                  ? "Fetching attestation..."
+                  : "Attestation pending"}
+              </div>
+              {claimState.status === "attestation-pending" && (
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: theme.mutedTextColor,
+                    marginTop: "4px",
+                  }}
+                >
+                  Checking every {ATTESTATION_POLL_INTERVAL_MS / 1000}s... This can take up to 15 minutes.
+                </div>
+              )}
+              <button
+                onClick={handleClaimReset}
+                style={{
+                  marginTop: "12px",
+                  padding: "6px 16px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  borderRadius: "4px",
+                  background: "transparent",
+                  color: theme.mutedTextColor,
+                  border: `1px solid ${theme.borderColor}`,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Attestation Ready — show details and claim button */}
+          {(claimState.status === "attestation-ready" || claimState.status === "claiming") && (
+            <div>
+              {/* Attestation Details Card */}
+              <div
+                style={{
+                  padding: "12px",
+                  borderRadius: `${theme.borderRadius}px`,
+                  background: theme.cardBackgroundColor,
+                  border: `1px solid ${theme.borderColor}`,
+                  marginBottom: "16px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: "10px",
+                  }}
+                >
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: theme.textColor }}>
+                    Attestation Details
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      background: `${theme.successColor}20`,
+                      color: theme.successColor,
+                    }}
+                  >
+                    Ready
+                  </span>
+                </div>
+                {/* Amount */}
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                  <span style={{ fontSize: "11px", color: theme.mutedTextColor }}>Amount</span>
+                  <span style={{ fontSize: "11px", fontWeight: 600, color: theme.textColor }}>
+                    {claimState.formattedAmount} USDC
+                  </span>
+                </div>
+                {/* Route */}
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+                  <span style={{ fontSize: "11px", color: theme.mutedTextColor }}>Route</span>
+                  <span style={{ fontSize: "11px", fontWeight: 500, color: theme.textColor }}>
+                    {claimState.sourceChainId ? getChainNameFromConfigs(claimState.sourceChainId, chains) : "?"}
+                    {" → "}
+                    {claimState.destinationChainId ? getChainNameFromConfigs(claimState.destinationChainId, chains) : "?"}
+                  </span>
+                </div>
+                {/* Recipient */}
+                {claimState.mintRecipient && (
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: "11px", color: theme.mutedTextColor }}>Recipient</span>
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontFamily: "monospace",
+                        color: theme.textColor,
+                      }}
+                    >
+                      {claimState.mintRecipient.slice(0, 6)}...{claimState.mintRecipient.slice(-4)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Claim Button */}
+              <button
+                onClick={handleClaimButtonClick}
+                disabled={claimButtonInfo.disabled}
+                aria-busy={claimState.status === "claiming"}
+                style={{
+                  width: "100%",
+                  padding: "14px",
+                  borderRadius: `${theme.borderRadius}px`,
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: claimButtonInfo.disabled ? "not-allowed" : "pointer",
+                  color: claimButtonInfo.disabled ? theme.mutedTextColor : theme.textColor,
+                  background: claimButtonInfo.disabled
+                    ? DISABLED_BUTTON_BACKGROUND
+                    : `linear-gradient(135deg, ${theme.primaryColor} 0%, ${theme.secondaryColor} 100%)`,
+                  boxShadow: claimButtonInfo.disabled
+                    ? "none"
+                    : `0 4px 14px ${theme.primaryColor}60, inset 0 1px 0 rgba(255,255,255,0.2)`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                }}
+              >
+                {claimState.status === "claiming" && <SpinnerIcon size={16} />}
+                {claimButtonInfo.text}
+              </button>
+            </div>
+          )}
+
+          {/* Success state */}
+          {claimState.status === "success" && (
+            <div role="status" aria-live="polite">
+              <div
+                style={{
+                  padding: "16px",
+                  borderRadius: `${theme.borderRadius}px`,
+                  background: `${theme.successColor}15`,
+                  border: `1px solid ${theme.successColor}40`,
+                  textAlign: "center",
+                  marginBottom: "16px",
+                }}
+              >
+                <CheckIcon size={32} color={theme.successColor} />
+                <div
+                  style={{
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    color: theme.successColor,
+                    marginTop: "8px",
+                  }}
+                >
+                  USDC Claimed Successfully
+                </div>
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: theme.textColor,
+                    marginTop: "4px",
+                  }}
+                >
+                  {claimState.formattedAmount} USDC →{" "}
+                  {claimState.destinationChainId
+                    ? getChainNameFromConfigs(claimState.destinationChainId, chains)
+                    : "destination"}
+                </div>
+                {claimState.claimTxHash && (
+                  <div
+                    style={{
+                      fontSize: "11px",
+                      fontFamily: "monospace",
+                      color: theme.mutedTextColor,
+                      marginTop: "8px",
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    Tx: {claimState.claimTxHash}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleClaimReset}
+                style={{
+                  width: "100%",
+                  padding: "14px",
+                  borderRadius: `${theme.borderRadius}px`,
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                  color: theme.textColor,
+                  background: `linear-gradient(135deg, ${theme.primaryColor} 0%, ${theme.secondaryColor} 100%)`,
+                }}
+              >
+                Claim Another
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pending Tab */}
+      {activeTab === "pending" && (
+        <div
+          role="tabpanel"
+          id={`${baseId}-pending-panel`}
+          aria-labelledby={`${baseId}-pending-tab`}
+        >
+          {pendingItems.length === 0 ? (
+            <div
+              style={{
+                padding: "32px 16px",
+                textAlign: "center",
+                color: theme.mutedTextColor,
+                fontSize: "13px",
+              }}
+            >
+              No pending operations
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {pendingItems.map((item) => (
+                <PendingItemCard
+                  key={`${item.type}-${item.id}`}
+                  item={item}
+                  theme={theme}
+                  chains={chains}
+                  onAction={() => {
+                    switch (item.actionType) {
+                      case "resume":
+                        retryBridge(item.id);
+                        break;
+                      case "execute":
+                        void executeClaimFromManager(item.id);
+                        break;
+                      case "retry":
+                        resumePolling(item.id);
+                        break;
+                      case "cancel":
+                        dismissClaim(item.id);
+                        break;
+                      default:
+                        // actionType is undefined for non-actionable items;
+                        // button is only rendered when actionable, so this is a no-op guard
+                        break;
+                    }
+                  }}
+                  onDismiss={() => {
+                    if (item.type === "bridge") {
+                      dismissBridge(item.id);
+                    } else {
+                      dismissClaim(item.id);
+                    }
+                  }}
+                  isActionDisabled={
+                    (item.type === "bridge" && isRecovering) ||
+                    (item.type === "claim" && activeClaimId === item.id)
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Powered by */}
       <div
         style={{
-          display: "flex",
-          alignItems: "flex-end",
-          gap: "12px",
-          marginBottom: "16px",
+          marginTop: "12px",
+          textAlign: "center",
+          fontSize: "10px",
+          color: theme.mutedTextColor,
+          opacity: 0.6,
         }}
       >
-        <ChainSelector
-          id={sourceChainId}
-          label="From"
-          chains={chains}
-          selectedChain={sourceChainConfig}
-          onSelect={setSourceChainConfig}
-          excludeChainId={destChainConfig.chain.id}
-          theme={theme}
-          balances={isConnected ? allBalances : undefined}
-          isLoadingBalances={isConnected && isLoadingAllBalances}
-          disabled={isOperationPending}
-          borderless={borderless}
-        />
-        <SwapButton onClick={handleSwapChains} theme={theme} disabled={isOperationPending} />
-        <ChainSelector
-          id={destChainId}
-          label="To"
-          chains={chains}
-          selectedChain={destChainConfig}
-          onSelect={setDestChainConfig}
-          excludeChainId={sourceChainConfig.chain.id}
-          theme={theme}
-          balances={isConnected ? allBalances : undefined}
-          isLoadingBalances={isConnected && isLoadingAllBalances}
-          disabled={isOperationPending}
-          borderless={borderless}
-        />
+        Powered by{" "}
+        <span style={{ fontWeight: 600 }}>Circle CCTP</span>
       </div>
-
-      {/* Amount Input */}
-      <div style={{ marginBottom: "16px" }}>
-        <AmountInput
-          id={amountId}
-          value={amount}
-          onChange={setAmount}
-          balance={balanceFormatted}
-          onMaxClick={handleMaxClick}
-          theme={theme}
-          disabled={isOperationPending}
-          showBalance={isConnected}
-          borderless={borderless}
-        />
-      </div>
-
-      {/* Config Error */}
-      {configError && (
-        <div
-          role="alert"
-          style={{
-            fontSize: "12px",
-            color: theme.errorColor,
-            background: `${theme.errorColor}15`,
-            padding: "8px 12px",
-            borderRadius: `${theme.borderRadius}px`,
-            marginBottom: "16px",
-          }}
-        >
-          Configuration Error: {configError}
-        </div>
-      )}
-
-      {/* Error */}
-      {error && !configError && (
-        <div
-          role="alert"
-          style={{
-            fontSize: "12px",
-            color: theme.errorColor,
-            background: `${theme.errorColor}15`,
-            padding: "8px 12px",
-            borderRadius: `${theme.borderRadius}px`,
-            marginBottom: "16px",
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {/* Action Button */}
-      <button
-        onClick={handleButtonClick}
-        disabled={isButtonActuallyDisabled}
-        aria-busy={isConfirming || isApproving || isBridging}
-        style={buttonStyles}
-      >
-        {buttonText}
-      </button>
     </div>
   );
 }

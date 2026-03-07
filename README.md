@@ -165,6 +165,10 @@ const handleConnectWallet = () => {
 | `onConnectWallet` | `function` | - | **Recommended.** Called when "Connect Wallet" clicked. Required for wallet connection to work. |
 | `theme` | `BridgeWidgetTheme` | Default theme | Custom theme overrides |
 | `borderless` | `boolean` | `false` | Remove borders/shadows for seamless integration |
+| `enablePersistence` | `boolean` | `true` | Persist bridge state to localStorage for recovery |
+| `onPendingBridgeDetected` | `function` | - | Called when incomplete bridges are found on load |
+| `onRecoveryComplete` | `function` | - | Called when a recovered bridge completes |
+| `onRecoveryError` | `function` | - | Called when bridge recovery fails |
 | `className` | `string` | - | Custom CSS class |
 | `style` | `CSSProperties` | - | Custom inline styles |
 
@@ -283,6 +287,31 @@ Use the `borderless` prop for seamless integration into your existing UI. This r
 />
 ```
 
+## Bridge Recovery
+
+The widget automatically persists bridge state to localStorage. If a user closes the tab during bridging (e.g., during the ~15 min attestation wait), a recovery banner appears on next visit allowing them to resume.
+
+```tsx
+<BridgeWidget
+  enablePersistence={true} // default
+  onPendingBridgeDetected={(bridges) => {
+    console.log(`Found ${bridges.length} incomplete bridge(s)`);
+  }}
+  onRecoveryComplete={({ sourceChainId, destChainId, amount, txHash }) => {
+    console.log(`Recovery complete: ${amount} USDC, tx: ${txHash}`);
+  }}
+  onRecoveryError={(error) => {
+    console.error("Recovery failed:", error.message);
+  }}
+/>
+```
+
+Advanced consumers can use the recovery hook and storage utilities directly:
+
+```tsx
+import { useRecovery, loadPendingBridges } from "@honeypot-finance/usdc-bridge-widget";
+```
+
 ## Using Individual Hooks
 
 The widget exports its internal hooks for advanced usage:
@@ -294,6 +323,7 @@ import {
   useUSDCAllowance,
   useBridge,
   useBridgeQuote,
+  useRecovery,
 } from "@honeypot-finance/usdc-bridge-widget";
 
 function CustomComponent() {

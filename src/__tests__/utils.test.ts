@@ -4,9 +4,12 @@ import {
   parseUSDCAmount,
   isValidPositiveAmount,
   getErrorMessage,
+  isEIP1193Provider,
+  toHexString,
   validateAmountInput,
   validateChainConfig,
   validateChainConfigs,
+  ensureHexPrefix,
   MAX_USDC_AMOUNT,
 } from "../utils";
 import type { BridgeChainConfig } from "../types";
@@ -251,5 +254,73 @@ describe("validateChainConfigs", () => {
     ]);
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes("Duplicate chain ID"))).toBe(true);
+  });
+});
+
+describe("isEIP1193Provider", () => {
+  it("returns true for valid EIP-1193 provider", () => {
+    const provider = { request: async () => {} };
+    expect(isEIP1193Provider(provider)).toBe(true);
+  });
+
+  it("returns false for null", () => {
+    expect(isEIP1193Provider(null)).toBe(false);
+  });
+
+  it("returns false for undefined", () => {
+    expect(isEIP1193Provider(undefined)).toBe(false);
+  });
+
+  it("returns false for non-object", () => {
+    expect(isEIP1193Provider("string")).toBe(false);
+    expect(isEIP1193Provider(123)).toBe(false);
+  });
+
+  it("returns false for object without request", () => {
+    expect(isEIP1193Provider({ foo: "bar" })).toBe(false);
+  });
+
+  it("returns false for object with non-function request", () => {
+    expect(isEIP1193Provider({ request: "not a function" })).toBe(false);
+  });
+});
+
+describe("toHexString", () => {
+  it("returns the value as hex type when it starts with 0x", () => {
+    expect(toHexString("0xabc123")).toBe("0xabc123");
+  });
+
+  it("returns undefined for strings without 0x prefix", () => {
+    expect(toHexString("abc123")).toBeUndefined();
+  });
+
+  it("returns undefined for undefined input", () => {
+    expect(toHexString(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for empty string", () => {
+    expect(toHexString("")).toBeUndefined();
+  });
+
+  it("handles 0x alone", () => {
+    expect(toHexString("0x")).toBe("0x");
+  });
+});
+
+describe("ensureHexPrefix", () => {
+  it("returns input unchanged when it already has 0x prefix", () => {
+    expect(ensureHexPrefix("0xabc123")).toBe("0xabc123");
+  });
+
+  it("adds 0x prefix when missing", () => {
+    expect(ensureHexPrefix("abc123")).toBe("0xabc123");
+  });
+
+  it("handles empty string", () => {
+    expect(ensureHexPrefix("")).toBe("0x");
+  });
+
+  it("does not double-prefix", () => {
+    expect(ensureHexPrefix("0x0xabc")).toBe("0x0xabc");
   });
 });

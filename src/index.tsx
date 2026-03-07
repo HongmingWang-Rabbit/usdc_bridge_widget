@@ -8,6 +8,8 @@ export type {
   BridgeChainConfig,
   BridgeEstimate,
   BridgeResult,
+  ClaimStatus,
+  ClaimState,
 } from "./types";
 
 // Hooks (for advanced usage)
@@ -27,7 +29,43 @@ export {
 
 // Bridge hook
 export { useBridge, useBridgeQuote, getChainName } from "./useBridge";
-export type { BridgeParams, BridgeState, BridgeEvent, UseBridgeResult, BridgeQuote } from "./useBridge";
+export type { BridgeParams, BridgeState, BridgeEvent, UseBridgeResult, BridgeQuote, BridgePersistenceConfig } from "./useBridge";
+
+// Recovery hook
+export { useRecovery } from "./useRecovery";
+export type { UseRecoveryResult, UseRecoveryOptions } from "./useRecovery";
+
+// Claim hook (manual USDC recovery)
+export { useClaim } from "./useClaim";
+export type { UseClaimResult, UseClaimOptions } from "./useClaim";
+
+// Claim manager hook (multi-claim persistence)
+export { useClaimManager } from "./useClaimManager";
+export type { UseClaimManagerResult, UseClaimManagerOptions } from "./useClaimManager";
+
+// Pending tab hook (aggregator)
+export { usePendingTab } from "./usePendingTab";
+export type { UsePendingTabResult, PendingItem, PendingItemType, PendingActionType, PendingStatusVariant } from "./usePendingTab";
+
+// Persistence storage utilities (for advanced consumers)
+export {
+  savePendingBridge,
+  updatePendingBridge,
+  loadPendingBridges,
+  loadPendingBridgeById,
+  removePendingBridge,
+  cleanupStaleBridges,
+  savePendingClaim,
+  loadPendingClaims,
+  removePendingClaim,
+} from "./storage";
+export type {
+  PendingBridgeRecord,
+  PendingBridgeStatus,
+  PendingBridgeFailureHint,
+  PendingClaimRecord,
+  PendingClaimStatus,
+} from "./storage";
 
 // Utilities
 export {
@@ -35,11 +73,15 @@ export {
   getErrorMessage,
   parseUSDCAmount,
   isValidPositiveAmount,
+  isEIP1193Provider,
+  toHexString,
   validateAmountInput,
   validateChainConfig,
   validateChainConfigs,
+  bigIntReplacer,
   MAX_USDC_AMOUNT,
   MIN_USDC_AMOUNT,
+  ensureHexPrefix,
 } from "./utils";
 export type { ChainConfigValidationResult } from "./utils";
 
@@ -53,6 +95,10 @@ export {
   TOKEN_MESSENGER_ADDRESSES,
   CHAIN_ICONS,
   DEFAULT_LOCALE,
+  CCTP_DOMAIN_IDS,
+  CCTP_DOMAIN_TO_CHAIN_ID,
+  MESSAGE_TRANSMITTER_V2_ADDRESS,
+  CIRCLE_IRIS_API_URL,
 } from "./constants";
 
 // Chain configs and helpers
@@ -108,4 +154,6 @@ export {
   ErrorIcon,
   ExternalLinkIcon,
   WalletIcon,
+  WarningIcon,
+  SearchIcon,
 } from "./icons";

@@ -75,6 +75,43 @@ export const TOKEN_MESSENGER_ADDRESSES: Record<number, `0x${string}`> = {
   81224: TOKEN_MESSENGER_V2_ADDRESS, // Codex
 };
 
+// CCTP domain IDs per chain (from https://developers.circle.com/cctp/cctp-supported-blockchains)
+export const CCTP_DOMAIN_IDS: Record<number, number> = {
+  1: 0, // Ethereum
+  43114: 1, // Avalanche
+  10: 2, // Optimism
+  42161: 3, // Arbitrum
+  8453: 6, // Base
+  137: 7, // Polygon
+  130: 10, // Unichain
+  59144: 11, // Linea
+  81224: 12, // Codex
+  146: 13, // Sonic
+  480: 14, // World Chain
+  10200: 15, // Monad
+  1329: 16, // Sei
+  50: 18, // XDC
+  999: 19, // HyperEVM
+  57073: 21, // Ink
+  98866: 22, // Plume
+};
+
+// Reverse mapping: CCTP domain ID → chain ID
+export const CCTP_DOMAIN_TO_CHAIN_ID: Record<number, number> = Object.fromEntries(
+  Object.entries(CCTP_DOMAIN_IDS).map(([chainId, domainId]) => [domainId, Number(chainId)])
+);
+
+// MessageTransmitterV2 address (CCTP V2 - same address on all supported chains)
+export const MESSAGE_TRANSMITTER_V2_ADDRESS: `0x${string}` =
+  "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64";
+
+// Circle Iris API for attestation lookups
+export const CIRCLE_IRIS_API_URL = "https://iris-api.circle.com/v2/messages";
+
+// Attestation polling configuration
+export const ATTESTATION_POLL_INTERVAL_MS = 30_000;
+export const ATTESTATION_POLL_MAX_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
 // Chain icon URLs (using DefiLlama's reliable CDN)
 export const CHAIN_ICONS: Record<number, string> = {
   1: "https://icons.llamao.fi/icons/chains/rsz_ethereum.jpg", // Ethereum

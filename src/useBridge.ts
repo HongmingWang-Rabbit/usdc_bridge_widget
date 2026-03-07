@@ -1,9 +1,16 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
 import { BridgeKit, BridgeChain } from "@circle-fin/bridge-kit";
+import type { BridgeResult as BridgeKitResult } from "@circle-fin/bridge-kit";
 import { createViemAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
 import type { BridgeChainConfig } from "./types";
-import type { EIP1193Provider } from "viem";
+import { isEIP1193Provider } from "./utils";
+import {
+  savePendingBridge,
+  updatePendingBridge,
+  removePendingBridge,
+  loadPendingBridgeById,
+} from "./storage";
 
 // Maximum number of events to retain to prevent memory growth.
 // 100 events is sufficient to track a full bridge lifecycle (approve, burn, attestation, mint)
@@ -34,6 +41,14 @@ const CHAIN_ID_TO_BRIDGE_CHAIN: Record<number, BridgeChain> = {
   81224: BridgeChain.Codex,
 };
 
+// Represents a single step in a BridgeResult from Bridge Kit
+interface BridgeResultStep {
+  name?: string;
+  state?: string;
+  txHash?: string;
+  errorMessage?: string;
+}
+
 // Type guard for Bridge Kit event with txHash
 interface BridgeEventWithTxHash {
   values?: {
@@ -57,16 +72,6 @@ function extractTxHash(event: unknown): `0x${string}` | undefined {
     }
   }
   return undefined;
-}
-
-// Type guard for EIP-1193 provider
-function isEIP1193Provider(provider: unknown): provider is EIP1193Provider {
-  return (
-    typeof provider === "object" &&
-    provider !== null &&
-    "request" in provider &&
-    typeof (provider as EIP1193Provider).request === "function"
-  );
 }
 
 export function getBridgeChain(chainId: number): BridgeChain | undefined {
@@ -98,6 +103,27 @@ export interface BridgeEvent {
   data?: unknown;
 }
 
+// Bridge Kit may include a partial BridgeResult in thrown errors
+function extractBridgeResultFromError(error: unknown): BridgeKitResult | undefined {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "result" in error &&
+    typeof (error as { result: unknown }).result === "object" &&
+    (error as { result: { steps?: unknown } }).result !== null &&
+    Array.isArray((error as { result: { steps?: unknown[] } }).result.steps)
+  ) {
+    return (error as { result: BridgeKitResult }).result;
+  }
+  return undefined;
+}
+
+export interface BridgePersistenceConfig {
+  walletAddress: string;
+  sourceChainId: number;
+  destChainId: number;
+}
+
 export interface UseBridgeResult {
   bridge: (params: BridgeParams) => Promise<void>;
   state: BridgeState;
@@ -105,9 +131,12 @@ export interface UseBridgeResult {
 }
 
 /**
- * Hook to execute USDC bridge transfers using Circle's Bridge Kit
+ * Hook to execute USDC bridge transfers using Circle's Bridge Kit.
+ *
+ * @param persistence - Optional persistence config. When provided, the hook
+ * saves bridge progress to localStorage so incomplete transfers can be recovered.
  */
-export function useBridge(): UseBridgeResult {
+export function useBridge(persistence?: BridgePersistenceConfig): UseBridgeResult {
   const { connector, isConnected } = useAccount();
   const [state, setState] = useState<BridgeState>({
     status: "idle",
@@ -122,6 +151,13 @@ export function useBridge(): UseBridgeResult {
     aborted: boolean;
     kit: BridgeKit | null;
   } | null>(null);
+
+  // Track the pending bridge record ID for persistence updates
+  const pendingRecordIdRef = useRef<string | null>(null);
+
+  // Store persistence config in ref to avoid object identity issues in useCallback deps
+  const persistenceRef = useRef(persistence);
+  persistenceRef.current = persistence;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -210,20 +246,28 @@ export function useBridge(): UseBridgeResult {
         const kit = new BridgeKit();
         operation.kit = kit;
 
+        // Resolve BridgeChain identifiers early so handlers can use them
+        const sourceBridgeChain = getBridgeChain(sourceChainConfig.chain.id);
+        const destBridgeChain = getBridgeChain(destChainConfig.chain.id);
+
+        if (!sourceBridgeChain) {
+          throw new Error(`Unsupported source chain: ${sourceChainConfig.chain.name} (${sourceChainConfig.chain.id})`);
+        }
+        if (!destBridgeChain) {
+          throw new Error(`Unsupported destination chain: ${destChainConfig.chain.name} (${destChainConfig.chain.id})`);
+        }
+
+        // Read persistence config from ref (stable reference)
+        const persistence = persistenceRef.current;
+
         // Event handlers with abort checks
+        // Bridge Kit fires events when each step COMPLETES (per Circle docs:
+        // "Approval completed", "Burn completed", etc.), so each handler
+        // advances the status to the NEXT step in the pipeline.
         const handleApprove = (event: unknown) => {
           if (operation.aborted || !isMountedRef.current) return;
           addEvent("approve", event);
-          setState((prev) => ({
-            ...prev,
-            status: "approving",
-            txHash: extractTxHash(event),
-          }));
-        };
-
-        const handleBurn = (event: unknown) => {
-          if (operation.aborted || !isMountedRef.current) return;
-          addEvent("burn", event);
+          // Approve completed → burn is next
           setState((prev) => ({
             ...prev,
             status: "burning",
@@ -231,13 +275,79 @@ export function useBridge(): UseBridgeResult {
           }));
         };
 
-        const handleFetchAttestation = (event: unknown) => {
+        const handleBurn = (event: unknown) => {
           if (operation.aborted || !isMountedRef.current) return;
-          addEvent("fetchAttestation", event);
+          addEvent("burn", event);
+          // Burn completed → attestation polling is next
           setState((prev) => ({
             ...prev,
             status: "fetching-attestation",
+            txHash: extractTxHash(event),
           }));
+
+          // Burn is the point of no return - persist the record
+          if (persistence) {
+            const burnTxHash = extractTxHash(event);
+            // Build a partial BridgeResult to persist for recovery.
+            // Bridge Kit's retry() uses the steps array to determine where to resume.
+            // Note: This partial result has minimal chain data; the full BridgeResult
+            // (with RPC endpoints, contracts, etc.) is stored when kit.bridge() resolves.
+            const partialResult = {
+              amount,
+              token: "USDC",
+              state: "pending",
+              provider: "CCTPV2BridgingProvider",
+              source: {
+                address: persistence.walletAddress,
+                chain: { name: sourceBridgeChain },
+              },
+              destination: {
+                address: persistence.walletAddress,
+                chain: { name: destBridgeChain },
+              },
+              steps: [
+                { name: "approve", state: "success" },
+                { name: "burn", state: "success", ...(burnTxHash ? { txHash: burnTxHash } : {}) },
+              ],
+            } as BridgeKitResult;
+
+            const record = savePendingBridge({
+              walletAddress: persistence.walletAddress.toLowerCase(),
+              sourceChainId: persistence.sourceChainId,
+              destChainId: persistence.destChainId,
+              amount,
+              bridgeResult: partialResult,
+              status: "in-progress",
+            });
+
+            if (record) {
+              pendingRecordIdRef.current = record.id;
+            }
+          }
+        };
+
+        const handleFetchAttestation = (event: unknown) => {
+          if (operation.aborted || !isMountedRef.current) return;
+          addEvent("fetchAttestation", event);
+          // Attestation received → mint is next
+          setState((prev) => ({
+            ...prev,
+            status: "minting",
+          }));
+
+          // Update persisted record with attestation step
+          if (pendingRecordIdRef.current) {
+            const record = loadPendingBridgeById(pendingRecordIdRef.current);
+            if (record?.bridgeResult?.steps) {
+              record.bridgeResult.steps.push({ name: "fetchAttestation", state: "success" });
+              updatePendingBridge(pendingRecordIdRef.current, {
+                bridgeResult: record.bridgeResult,
+                status: "in-progress",
+              });
+            } else {
+              updatePendingBridge(pendingRecordIdRef.current, { status: "in-progress" });
+            }
+          }
         };
 
         const handleMint = (event: unknown) => {
@@ -248,6 +358,25 @@ export function useBridge(): UseBridgeResult {
             status: "minting",
             txHash: extractTxHash(event),
           }));
+
+          // Update persisted record with mint step
+          if (pendingRecordIdRef.current) {
+            const mintTxHash = extractTxHash(event);
+            const record = loadPendingBridgeById(pendingRecordIdRef.current);
+            if (record?.bridgeResult?.steps) {
+              record.bridgeResult.steps.push({
+                name: "mint",
+                state: "success",
+                ...(mintTxHash ? { txHash: mintTxHash } : {}),
+              });
+              updatePendingBridge(pendingRecordIdRef.current, {
+                bridgeResult: record.bridgeResult,
+                status: "in-progress",
+              });
+            } else {
+              updatePendingBridge(pendingRecordIdRef.current, { status: "in-progress" });
+            }
+          }
         };
 
         // Assign cleanup function now that handlers are created
@@ -269,15 +398,9 @@ export function useBridge(): UseBridgeResult {
         kit.on("fetchAttestation", handleFetchAttestation);
         kit.on("mint", handleMint);
 
-        // Get BridgeChain identifiers for Bridge Kit
-        const sourceBridgeChain = getBridgeChain(sourceChainConfig.chain.id);
-        const destBridgeChain = getBridgeChain(destChainConfig.chain.id);
-
-        if (!sourceBridgeChain) {
-          throw new Error(`Unsupported source chain: ${sourceChainConfig.chain.name} (${sourceChainConfig.chain.id})`);
-        }
-        if (!destBridgeChain) {
-          throw new Error(`Unsupported destination chain: ${destChainConfig.chain.name} (${destChainConfig.chain.id})`);
+        // Advance to "approving" since approve is the first step
+        if (!operation.aborted && isMountedRef.current) {
+          setState((prev) => ({ ...prev, status: "approving" }));
         }
 
         // Execute the bridge transfer
@@ -299,11 +422,60 @@ export function useBridge(): UseBridgeResult {
         }
 
         addEvent("complete", result);
-        setState((prev) => ({
-          ...prev,
-          status: "success",
-          txHash: extractTxHash(result),
-        }));
+
+        // Check if all steps actually completed successfully
+        // Bridge Kit may resolve even when mint was rejected/failed
+        const allStepsSucceeded = result.steps?.every(
+          (s: BridgeResultStep) => s.state === "success" || s.state === "noop"
+        ) ?? false;
+
+        if (pendingRecordIdRef.current) {
+          if (allStepsSucceeded) {
+            removePendingBridge(pendingRecordIdRef.current);
+          } else {
+            // Bridge Kit resolved but not all steps completed - keep for recovery
+            updatePendingBridge(pendingRecordIdRef.current, {
+              bridgeResult: result,
+              status: "recovery-pending",
+            });
+          }
+          pendingRecordIdRef.current = null;
+        } else if (!allStepsSucceeded && persistence) {
+          // No record exists yet (handleBurn may not have fired), but burn step succeeded
+          // This means USDC is burned and needs recovery
+          const burnStep = result.steps?.find(
+            (s: BridgeResultStep) => s.name === "burn" && s.state === "success"
+          );
+          if (burnStep) {
+            savePendingBridge({
+              walletAddress: persistence.walletAddress.toLowerCase(),
+              sourceChainId: persistence.sourceChainId,
+              destChainId: persistence.destChainId,
+              amount,
+              bridgeResult: result,
+              status: "recovery-pending",
+            });
+          }
+        }
+
+        if (allStepsSucceeded) {
+          setState((prev) => ({
+            ...prev,
+            status: "success",
+            txHash: extractTxHash(result),
+          }));
+        } else {
+          // Build descriptive error from the failed step
+          const failedStep = result.steps?.find((s: BridgeResultStep) => s.state === "error");
+          const stepName = failedStep?.name ?? "unknown";
+          const stepError = failedStep?.errorMessage ?? "Step failed";
+          setState((prev) => ({
+            ...prev,
+            status: "error",
+            txHash: extractTxHash(result),
+            error: new Error(`Bridge failed at ${stepName}: ${stepError}`),
+          }));
+        }
       } catch (error) {
         // Clean up event listeners on error if they were set up
         if (cleanupListeners) {
@@ -313,6 +485,37 @@ export function useBridge(): UseBridgeResult {
         // Don't update state if operation was aborted
         if (operation.aborted || !isMountedRef.current) {
           return;
+        }
+
+        // Update persisted record to recovery-pending so it can be retried
+        if (pendingRecordIdRef.current) {
+          // Try to extract a BridgeResult from the error for better retry support
+          const errorResult = extractBridgeResultFromError(error);
+          if (errorResult) {
+            updatePendingBridge(pendingRecordIdRef.current, {
+              bridgeResult: errorResult,
+              status: "recovery-pending",
+            });
+          } else {
+            updatePendingBridge(pendingRecordIdRef.current, {
+              status: "recovery-pending",
+            });
+          }
+          pendingRecordIdRef.current = null;
+        } else if (persistence) {
+          // Fallback: if no record was saved during burn but the error contains a BridgeResult,
+          // create a new recovery record so the user can still recover
+          const errorResult = extractBridgeResultFromError(error);
+          if (errorResult) {
+            savePendingBridge({
+              walletAddress: persistence.walletAddress.toLowerCase(),
+              sourceChainId: persistence.sourceChainId,
+              destChainId: persistence.destChainId,
+              amount: params.amount,
+              bridgeResult: errorResult,
+              status: "recovery-pending",
+            });
+          }
         }
 
         addEvent("error", error);

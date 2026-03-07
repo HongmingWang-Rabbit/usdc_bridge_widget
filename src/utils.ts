@@ -1,9 +1,19 @@
 import { USDC_DECIMALS, MAX_USDC_AMOUNT, DEFAULT_LOCALE } from "./constants";
 import { parseUnits, isAddress } from "viem";
+import type { EIP1193Provider } from "viem";
 import type { BridgeChainConfig } from "./types";
+
+export { type EIP1193Provider } from "viem";
 
 // Re-export amount constants for backwards compatibility
 export { MAX_USDC_AMOUNT, MIN_USDC_AMOUNT } from "./constants";
+
+/**
+ * JSON.stringify replacer that converts BigInt values to strings.
+ * Bridge Kit SDK may return BigInt values that crash standard JSON.stringify.
+ */
+export const bigIntReplacer = (_key: string, value: unknown): unknown =>
+  typeof value === "bigint" ? value.toString() : value;
 
 /**
  * Format a number for display with locale-aware formatting
@@ -21,7 +31,7 @@ export { MAX_USDC_AMOUNT, MIN_USDC_AMOUNT } from "./constants";
 export function formatNumber(
   value: string | number,
   decimals: number = 2,
-  locale: string = DEFAULT_LOCALE
+  locale: string = DEFAULT_LOCALE,
 ): string {
   const num = typeof value === "string" ? parseFloat(value) : value;
   if (isNaN(num)) return "0";
@@ -50,12 +60,20 @@ export function validateAmountInput(value: string): {
 
   // Reject scientific notation
   if (/[eE]/.test(value)) {
-    return { isValid: false, sanitized: "", error: "Scientific notation not allowed" };
+    return {
+      isValid: false,
+      sanitized: "",
+      error: "Scientific notation not allowed",
+    };
   }
 
   // Reject negative signs
   if (value.includes("-")) {
-    return { isValid: false, sanitized: "", error: "Negative values not allowed" };
+    return {
+      isValid: false,
+      sanitized: "",
+      error: "Negative values not allowed",
+    };
   }
 
   // Allow partial input like "." or "0."
@@ -81,12 +99,20 @@ export function validateAmountInput(value: string): {
   // Check max value
   const num = parseFloat(value);
   if (!isNaN(num) && num > parseFloat(MAX_USDC_AMOUNT)) {
-    return { isValid: false, sanitized: value, error: "Amount exceeds maximum" };
+    return {
+      isValid: false,
+      sanitized: value,
+      error: "Amount exceeds maximum",
+    };
   }
 
   // Sanitize leading zeros (except for "0." case)
   let sanitized = value;
-  if (sanitized.length > 1 && sanitized.startsWith("0") && sanitized[1] !== ".") {
+  if (
+    sanitized.length > 1 &&
+    sanitized.startsWith("0") &&
+    sanitized[1] !== "."
+  ) {
     sanitized = sanitized.replace(/^0+/, "") || "0";
   }
 
@@ -152,7 +178,7 @@ export interface ChainConfigValidationResult {
  * @returns Validation result with errors if any
  */
 export function validateChainConfig(
-  config: BridgeChainConfig
+  config: BridgeChainConfig,
 ): ChainConfigValidationResult {
   const errors: string[] = [];
 
@@ -174,15 +200,22 @@ export function validateChainConfig(
 
   // Check USDC address
   if (!config.usdcAddress) {
-    errors.push(`USDC address is required for chain ${config.chain.name || config.chain.id}`);
+    errors.push(
+      `USDC address is required for chain ${config.chain.name || config.chain.id}`,
+    );
   } else if (!isAddress(config.usdcAddress)) {
-    errors.push(`Invalid USDC address for chain ${config.chain.name}: ${config.usdcAddress}`);
+    errors.push(
+      `Invalid USDC address for chain ${config.chain.name}: ${config.usdcAddress}`,
+    );
   }
 
   // Check TokenMessenger address (optional but validate if provided)
-  if (config.tokenMessengerAddress && !isAddress(config.tokenMessengerAddress)) {
+  if (
+    config.tokenMessengerAddress &&
+    !isAddress(config.tokenMessengerAddress)
+  ) {
     errors.push(
-      `Invalid TokenMessenger address for chain ${config.chain.name}: ${config.tokenMessengerAddress}`
+      `Invalid TokenMessenger address for chain ${config.chain.name}: ${config.tokenMessengerAddress}`,
     );
   }
 
@@ -193,6 +226,34 @@ export function validateChainConfig(
 }
 
 /**
+ * Type guard for EIP-1193 compatible wallet providers.
+ * Checks that the value is an object with a `request` function.
+ */
+export function isEIP1193Provider(
+  provider: unknown,
+): provider is EIP1193Provider {
+  return (
+    typeof provider === "object" &&
+    provider !== null &&
+    "request" in provider &&
+    typeof (provider as EIP1193Provider).request === "function"
+  );
+}
+
+/**
+ * Safely cast a string to a hex-prefixed address/hash type.
+ * Returns undefined if the string doesn't start with "0x".
+ */
+export function toHexString(
+  value: string | undefined,
+): `0x${string}` | undefined {
+  if (typeof value === "string" && value.startsWith("0x")) {
+    return value as `0x${string}`;
+  }
+  return undefined;
+}
+
+/**
  * Validate an array of chain configurations.
  * Returns the first error found or success if all configs are valid.
  *
@@ -200,7 +261,7 @@ export function validateChainConfig(
  * @returns Validation result with all errors
  */
 export function validateChainConfigs(
-  configs: BridgeChainConfig[]
+  configs: BridgeChainConfig[],
 ): ChainConfigValidationResult {
   const allErrors: string[] = [];
 
@@ -209,11 +270,17 @@ export function validateChainConfigs(
   }
 
   if (configs.length === 0) {
-    return { isValid: false, errors: ["At least one chain configuration is required"] };
+    return {
+      isValid: false,
+      errors: ["At least one chain configuration is required"],
+    };
   }
 
   if (configs.length < 2) {
-    return { isValid: false, errors: ["At least two chains are required for bridging"] };
+    return {
+      isValid: false,
+      errors: ["At least two chains are required for bridging"],
+    };
   }
 
   // Check for duplicate chain IDs
@@ -236,4 +303,12 @@ export function validateChainConfigs(
     isValid: allErrors.length === 0,
     errors: allErrors,
   };
+}
+
+/**
+ * Ensure a hex string has a 0x prefix.
+ * Returns the input as a `0x${string}` type for use with viem/wagmi.
+ */
+export function ensureHexPrefix(hex: string): `0x${string}` {
+  return (hex.startsWith("0x") ? hex : `0x${hex}`) as `0x${string}`;
 }

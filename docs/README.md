@@ -56,14 +56,22 @@ If `onConnectWallet` is not provided, a console warning will be logged when the 
 
 | File | Purpose |
 |------|---------|
-| `BridgeWidget.tsx` | Main widget component with UI |
-| `useBridge.ts` | Bridge execution via Circle SDK |
+| `BridgeWidget.tsx` | Main widget component (~1250 lines), imports sub-components |
+| `components/` | 8 extracted sub-components (ChainSelector, AmountInput, BridgeProgress, RecoveryBanner, PendingItemCard, etc.) |
+| `widgetUtils.ts` | Shared helpers and constants for sub-components |
+| `useBridge.ts` | Bridge execution via Circle SDK with persistence |
+| `useRecovery.ts` | Recovery hook with error/success feedback |
+| `useClaim.ts` | Manual USDC claim hook (paste burn tx → fetch attestation → mint) |
+| `useClaimManager.ts` | Multi-claim persistence with background attestation polling |
+| `usePendingTab.ts` | Unified aggregator merging bridge and claim records into `PendingItem[]` |
+| `storage.ts` | SSR-safe localStorage CRUD using factory pattern for bridge and claim records |
 | `hooks.ts` | Balance, allowance, and estimation hooks |
 | `chains.ts` | Chain configurations and custom definitions |
-| `constants.ts` | USDC addresses, TokenMessenger addresses |
-| `utils.ts` | Validation and formatting utilities |
+| `constants.ts` | USDC addresses, TokenMessenger addresses, CCTP domain IDs |
+| `utils.ts` | Validation, formatting, and provider utilities |
 | `theme.ts` | Theme system and presets |
 | `types.ts` | TypeScript interfaces |
+| `icons.tsx` | SVG icon components |
 
 ### Data Flow
 
@@ -82,9 +90,65 @@ User Input → BridgeWidget
                 ↓
     Circle Bridge Kit SDK Events
     (approve → burn → attestation → mint)
-                ↓
-         Success/Error Callbacks
+         ↓               ↓
+    BridgeProgress    localStorage (storage.ts)
+    (stepper UI)      (persistence for recovery)
+         ↓               ↓
+    Success/Error     RecoveryBanner on next visit
+    Callbacks         (useRecovery hook)
 ```
+
+### Bridge Persistence & Recovery
+
+The widget persists bridge state to localStorage so users can recover incomplete transfers after closing the tab:
+
+1. **On burn** (point of no return): `PendingBridgeRecord` saved with partial `BridgeResult`
+2. **During attestation/mint**: Steps progressively updated in persisted record
+3. **On success**: Record removed, green success banner shown (auto-clears after 8s)
+4. **On error**: Record kept as `"recovery-pending"` with user-friendly error message per-bridge
+5. **On next page load**: `useRecovery` detects pending records, shows `RecoveryBanner`
+6. **Resume**: Calls `kit.retry(record.bridgeResult, context)` to continue from last step
+
+**Recovery feedback:**
+- `lastSuccess`: Brief success message, auto-clears after 8 seconds
+- `lastError`: Per-bridge error with `{ bridgeId, message }` — only shown on the matching banner
+- `formatRecoveryError()` maps SDK errors to user-friendly messages (rejection, timeout, simulation failure)
+
+**Props:**
+- `enablePersistence` (default: `true`) - Toggle localStorage persistence
+- `onPendingBridgeDetected` - Fires when incomplete bridges found
+- `onRecoveryComplete` / `onRecoveryError` - Recovery lifecycle callbacks
+
+### Manual Claim (Claim Tab)
+
+The Claim tab allows users to manually recover USDC from CCTP burn transactions. Useful when:
+- The bridge UI was closed before the mint step completed
+- A third-party bridge produced a CCTP burn transaction
+- The automatic recovery didn't work
+
+**Flow:** Paste burn tx hash → parse CCTP message → poll attestation → switch chain → call `receiveMessage()` → USDC minted
+
+**Hooks:**
+- `useClaim(options)` — Single claim state machine: `idle → fetching-attestation → switching-chain → claiming → confirming → success`
+- `useClaimManager(options)` — Manages multiple persisted claims with background attestation polling
+- `usePendingTab(options)` — Aggregates bridge and claim records into unified `PendingItem[]` for the Pending tab
+
+**CCTP message parsing:**
+- V1: 116-byte header (8-byte nonce), version `0x00000000`
+- V2: 148-byte header (32-byte nonce + finality fields), version `0x00000001`
+
+### Storage Architecture
+
+Both bridge and claim records use a shared `createStorageAdapter<TRecord>()` factory:
+
+| Config | Bridge | Claim |
+|--------|--------|-------|
+| Prefix | `usdc_bridge_tx_` | `usdc_claim_tx_` |
+| Index key | `usdc_bridge_index` | `usdc_claim_index` |
+| Max records | 50 | 50 |
+| Stale threshold | 7 days | 7 days |
+
+Each adapter provides: `save`, `update`, `loadById`, `loadByWallet`, `remove`, `cleanupStale`
 
 ### Theme System
 
@@ -111,7 +175,7 @@ Pre-built presets: `dark`, `light`, `blue`, `green`
 
 ### Supported Chains
 
-The widget supports 16 CCTP V2 EVM chains:
+The widget supports 17 CCTP V2 EVM chains:
 
 | Chain | ID | Status |
 |-------|-----|--------|

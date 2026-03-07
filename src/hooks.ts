@@ -33,6 +33,7 @@ export function useUSDCBalance(chainConfig: BridgeChainConfig | undefined) {
     args: address ? [address] : undefined,
     query: {
       enabled: !!address && !!chainConfig?.usdcAddress,
+      staleTime: 30_000,
     },
   });
 
@@ -89,9 +90,9 @@ export function useAllUSDCBalances(chainConfigs: BridgeChainConfig[]): {
       enabled: !!address && isConnected && contracts.length > 0,
       refetchOnWindowFocus: true,
       refetchOnReconnect: true,
-      // Short stale time ensures fresh balances after transactions while
-      // preventing excessive refetches during normal usage
-      staleTime: 5000,
+      // Balance data is valid for 30 seconds - prevents excessive RPC calls
+      // across 16 chains while still catching balance changes after transactions
+      staleTime: 30_000,
     },
   });
 
@@ -157,6 +158,7 @@ export function useUSDCAllowance(
       address && effectiveSpender ? [address, effectiveSpender] : undefined,
     query: {
       enabled: !!address && !!chainConfig?.usdcAddress && !!effectiveSpender,
+      staleTime: 30_000,
     },
   });
 

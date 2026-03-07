@@ -4,6 +4,7 @@ import {
   WagmiProvider,
   createConfig,
   http,
+  fallback,
   useAccount,
   useDisconnect,
   useConnect,
@@ -97,24 +98,80 @@ const config = createConfig({
   chains: allChains as [typeof mainnet, ...typeof allChains],
   connectors: getConnectors(),
   transports: {
-    // Standard chains - use default public RPCs
-    [mainnet.id]: http(),
-    [arbitrum.id]: http(),
-    [base.id]: http(),
-    [optimism.id]: http(),
-    [polygon.id]: http(),
-    [avalanche.id]: http(),
-    [linea.id]: http("https://rpc.linea.build"),
-    [sei.id]: http("https://evm-rpc.sei-apis.com"),
-    // Custom chains with specific RPC URLs
-    [sonic.id]: http("https://rpc.soniclabs.com"),
-    [worldchain.id]: http("https://worldchain-mainnet.g.alchemy.com/public"),
-    [xdc.id]: http("https://erpc.xinfin.network"),
-    [ink.id]: http("https://rpc-gel.inkonchain.com"),
-    [unichain.id]: http("https://mainnet.unichain.org"),
-    [hyperEvm.id]: http("https://rpc.hyperliquid.xyz/evm"),
-    [plume.id]: http("https://rpc.plume.org"),
-    [codex.id]: http("https://rpc.codex.xyz"),
+    // Multiple CORS-friendly public RPCs per chain with fallback for reliability.
+    // wagmi's fallback() tries each transport in order, moving to the next on failure.
+    [mainnet.id]: fallback([
+      http("https://ethereum-rpc.publicnode.com"),
+      http("https://1rpc.io/eth"),
+      http("https://rpc.ankr.com/eth"),
+    ]),
+    [arbitrum.id]: fallback([
+      http("https://arbitrum-one-rpc.publicnode.com"),
+      http("https://1rpc.io/arb"),
+      http("https://rpc.ankr.com/arbitrum"),
+    ]),
+    [base.id]: fallback([
+      http("https://base-rpc.publicnode.com"),
+      http("https://1rpc.io/base"),
+      http("https://rpc.ankr.com/base"),
+    ]),
+    [optimism.id]: fallback([
+      http("https://optimism-rpc.publicnode.com"),
+      http("https://1rpc.io/op"),
+      http("https://rpc.ankr.com/optimism"),
+    ]),
+    [polygon.id]: fallback([
+      http("https://polygon-bor-rpc.publicnode.com"),
+      http("https://1rpc.io/matic"),
+      http("https://rpc.ankr.com/polygon"),
+    ]),
+    [avalanche.id]: fallback([
+      http("https://avalanche-c-chain-rpc.publicnode.com"),
+      http("https://1rpc.io/avax/c"),
+      http("https://rpc.ankr.com/avalanche"),
+    ]),
+    [linea.id]: fallback([
+      http("https://1rpc.io/linea"),
+      http("https://rpc.linea.build"),
+      http("https://linea-rpc.publicnode.com"),
+    ]),
+    [sei.id]: fallback([
+      http("https://evm-rpc.sei-apis.com"),
+      http("https://sei-rpc.publicnode.com"),
+      http("https://rpc.ankr.com/sei"),
+    ]),
+    // Custom chains
+    [sonic.id]: fallback([
+      http("https://rpc.soniclabs.com"),
+      http("https://sonic-rpc.publicnode.com"),
+    ]),
+    [worldchain.id]: fallback([
+      http("https://worldchain-mainnet.g.alchemy.com/public"),
+      http("https://worldchain-mainnet-rpc.publicnode.com"),
+    ]),
+    [xdc.id]: fallback([
+      http("https://erpc.xinfin.network"),
+      http("https://rpc.xinfin.network"),
+    ]),
+    [ink.id]: fallback([
+      http("https://rpc-gel.inkonchain.com"),
+      http("https://rpc-qn.inkonchain.com"),
+    ]),
+    [unichain.id]: fallback([
+      http("https://mainnet.unichain.org"),
+      http("https://unichain-rpc.publicnode.com"),
+    ]),
+    [hyperEvm.id]: fallback([
+      http("https://rpc.hyperliquid.xyz/evm"),
+      http("https://api.hyperliquid.xyz/evm"),
+    ]),
+    [plume.id]: fallback([
+      http("https://rpc.plume.org"),
+      http("https://plume-rpc.publicnode.com"),
+    ]),
+    [codex.id]: fallback([
+      http("https://rpc.codex.xyz"),
+    ]),
   },
 });
 
@@ -780,6 +837,17 @@ function BridgeDemo() {
         }}
         onBridgeError={(error) => {
           console.error("Bridge error:", error);
+        }}
+        enablePersistence={true}
+        onPendingBridgeDetected={(bridges) => {
+          console.log("Pending bridges detected:", bridges);
+        }}
+        onRecoveryComplete={(params) => {
+          console.log("Recovery complete:", params);
+          alert(`Recovery successful! ${params.amount} USDC bridged`);
+        }}
+        onRecoveryError={(error) => {
+          console.error("Recovery error:", error);
         }}
         theme={currentTheme}
       />
