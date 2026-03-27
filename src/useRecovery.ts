@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useConfig } from "wagmi";
 import { BridgeKit, resolveChainIdentifier, isRetryableError } from "@circle-fin/bridge-kit";
 import { createViemAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
-import { isEIP1193Provider, toHexString } from "./utils";
+import { isEIP1193Provider, toHexString, createPublicClientGetter } from "./utils";
 import { getBridgeChain } from "./useBridge";
 import {
   loadPendingBridges,
@@ -78,6 +78,7 @@ export interface UseRecoveryOptions {
 export function useRecovery(options: UseRecoveryOptions = {}): UseRecoveryResult {
   const { enabled = true, onRecoveryComplete, onRecoveryError, onPendingBridgeDetected } = options;
   const { address, isConnected, connector } = useAccount();
+  const wagmiConfig = useConfig();
   const [pendingBridges, setPendingBridges] = useState<PendingBridgeRecord[]>([]);
   const [isRecovering, setIsRecovering] = useState(false);
   const [lastError, setLastError] = useState<{ bridgeId: string; message: string } | null>(null);
@@ -85,7 +86,9 @@ export function useRecovery(options: UseRecoveryOptions = {}): UseRecoveryResult
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Store callbacks in refs to stabilize callback references
+  // Store configs and callbacks in refs to stabilize callback references
+  const wagmiConfigRef = useRef(wagmiConfig);
+  wagmiConfigRef.current = wagmiConfig;
   const onPendingBridgeDetectedRef = useRef(onPendingBridgeDetected);
   onPendingBridgeDetectedRef.current = onPendingBridgeDetected;
   const onRecoveryCompleteRef = useRef(onRecoveryComplete);
@@ -147,7 +150,10 @@ export function useRecovery(options: UseRecoveryOptions = {}): UseRecoveryResult
           throw new Error("Could not get wallet provider for recovery");
         }
 
-        const adapter = await createViemAdapterFromProvider({ provider });
+        const adapter = await createViemAdapterFromProvider({
+          provider,
+          getPublicClient: createPublicClientGetter(wagmiConfigRef.current),
+        });
 
         if (!isMountedRef.current) return;
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   formatNumber,
   parseUSDCAmount,
@@ -10,9 +10,18 @@ import {
   validateChainConfig,
   validateChainConfigs,
   ensureHexPrefix,
+  createPublicClientGetter,
   MAX_USDC_AMOUNT,
 } from "../utils";
 import type { BridgeChainConfig } from "../types";
+import { getPublicClient } from "wagmi/actions";
+import type { Config } from "wagmi";
+
+vi.mock("wagmi/actions", () => ({
+  getPublicClient: vi.fn(),
+}));
+
+const mockGetPublicClient = vi.mocked(getPublicClient);
 
 describe("formatNumber", () => {
   it("formats integers with decimal places", () => {
@@ -322,5 +331,61 @@ describe("ensureHexPrefix", () => {
 
   it("does not double-prefix", () => {
     expect(ensureHexPrefix("0x0xabc")).toBe("0x0xabc");
+  });
+});
+
+describe("createPublicClientGetter", () => {
+  const mockConfig = {} as Config;
+  const mockChain = { id: 1, name: "Ethereum" } as import("viem").Chain;
+  // A chain with rpcUrls for fallback tests (viem's createPublicClient needs this)
+  const chainWithRpc = {
+    id: 1329,
+    name: "Sei",
+    nativeCurrency: { name: "Sei", symbol: "SEI", decimals: 18 },
+    rpcUrls: { default: { http: ["https://evm-rpc.sei-apis.com"] } },
+  } as import("viem").Chain;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns a function", () => {
+    const getter = createPublicClientGetter(mockConfig);
+    expect(typeof getter).toBe("function");
+  });
+
+  it("delegates to wagmi getPublicClient when transport is configured", () => {
+    const mockClient = { type: "publicClient" };
+    mockGetPublicClient.mockReturnValue(mockClient as never);
+
+    const getter = createPublicClientGetter(mockConfig);
+    const result = getter({ chain: mockChain });
+
+    expect(mockGetPublicClient).toHaveBeenCalledWith(mockConfig, { chainId: 1 });
+    expect(result).toBe(mockClient);
+  });
+
+  it("falls back to a default public client when wagmi throws", () => {
+    mockGetPublicClient.mockImplementation(() => {
+      throw new Error("No transport configured for chain 1329");
+    });
+
+    const getter = createPublicClientGetter(mockConfig);
+    const result = getter({ chain: chainWithRpc });
+
+    // Should return a PublicClient (not throw or return undefined)
+    expect(result).toBeDefined();
+    expect(result).not.toBeNull();
+  });
+
+  it("falls back when wagmi returns undefined", () => {
+    mockGetPublicClient.mockReturnValue(undefined as never);
+
+    const getter = createPublicClientGetter(mockConfig);
+    const result = getter({ chain: chainWithRpc });
+
+    // Should return a fallback client, not undefined
+    expect(result).toBeDefined();
+    expect(result).not.toBeNull();
   });
 });

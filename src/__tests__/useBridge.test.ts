@@ -12,6 +12,12 @@ vi.mock("wagmi", () => ({
     },
     isConnected: true,
   })),
+  useConfig: () => ({}),
+}));
+
+// Mock wagmi/actions
+vi.mock("wagmi/actions", () => ({
+  getPublicClient: vi.fn(),
 }));
 
 // Mock Circle Bridge Kit

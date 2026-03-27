@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useConfig } from "wagmi";
 import { BridgeKit, BridgeChain } from "@circle-fin/bridge-kit";
 import type { BridgeResult as BridgeKitResult } from "@circle-fin/bridge-kit";
 import { createViemAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
 import type { BridgeChainConfig } from "./types";
-import { isEIP1193Provider } from "./utils";
+import { isEIP1193Provider, createPublicClientGetter } from "./utils";
 import {
   savePendingBridge,
   updatePendingBridge,
@@ -138,6 +138,7 @@ export interface UseBridgeResult {
  */
 export function useBridge(persistence?: BridgePersistenceConfig): UseBridgeResult {
   const { connector, isConnected } = useAccount();
+  const wagmiConfig = useConfig();
   const [state, setState] = useState<BridgeState>({
     status: "idle",
     events: [],
@@ -155,9 +156,11 @@ export function useBridge(persistence?: BridgePersistenceConfig): UseBridgeResul
   // Track the pending bridge record ID for persistence updates
   const pendingRecordIdRef = useRef<string | null>(null);
 
-  // Store persistence config in ref to avoid object identity issues in useCallback deps
+  // Store configs in refs to avoid object identity issues in useCallback deps
   const persistenceRef = useRef(persistence);
   persistenceRef.current = persistence;
+  const wagmiConfigRef = useRef(wagmiConfig);
+  wagmiConfigRef.current = wagmiConfig;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -232,9 +235,13 @@ export function useBridge(persistence?: BridgePersistenceConfig): UseBridgeResul
           throw new Error("Wallet provider is not EIP-1193 compatible");
         }
 
-        // Create adapter from the connected wallet's provider
+        // Create adapter from the connected wallet's provider.
+        // Pass getPublicClient so the Bridge Kit SDK uses the parent app's
+        // wagmi-configured transports (e.g. custom RPC URLs) instead of the
+        // chain's default public RPC.
         const adapter = await createViemAdapterFromProvider({
           provider,
+          getPublicClient: createPublicClientGetter(wagmiConfigRef.current),
         });
 
         // Check if aborted before continuing

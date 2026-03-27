@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useRecovery } from "../useRecovery";
+import { createViemAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
 
 // Mock wagmi
 const mockUseAccount = vi.fn();
 vi.mock("wagmi", () => ({
   useAccount: () => mockUseAccount(),
+  useConfig: () => ({}),
+}));
+
+// Mock wagmi/actions
+vi.mock("wagmi/actions", () => ({
+  getPublicClient: vi.fn(),
 }));
 
 // Mock storage
@@ -50,11 +57,13 @@ vi.mock("../useBridge", () => ({
 }));
 
 // Mock utils — toHexString must match real behavior: returns value as-is if already 0x-prefixed
+const mockCreatePublicClientGetter = vi.fn(() => vi.fn());
 vi.mock("../utils", () => ({
   isEIP1193Provider: vi.fn(() => true),
   toHexString: vi.fn((v: string | undefined) =>
     typeof v === "string" && v.startsWith("0x") ? v : undefined
   ),
+  createPublicClientGetter: (...args: unknown[]) => mockCreatePublicClientGetter(...args),
 }));
 
 // Helper to create mock bridge records
@@ -181,6 +190,36 @@ describe("useRecovery", () => {
       });
 
       expect(mockLoadPendingBridgeById).toHaveBeenCalledWith("rec-1");
+    });
+
+    it("passes getPublicClient from createPublicClientGetter to adapter", async () => {
+      const record = createRecord();
+      mockLoadPendingBridges.mockReturnValue([record]);
+      mockLoadPendingBridgeById.mockReturnValue(record);
+      const mockClientGetter = vi.fn();
+      mockCreatePublicClientGetter.mockReturnValue(mockClientGetter);
+      mockRetry.mockResolvedValue({
+        steps: [
+          { name: "approve", state: "noop" },
+          { name: "burn", state: "noop" },
+          { name: "fetchAttestation", state: "success" },
+          { name: "mint", state: "success", txHash: "0xmint123" },
+        ],
+      });
+
+      const { result } = renderHook(() => useRecovery());
+
+      await act(async () => {
+        await result.current.retryBridge("rec-1");
+      });
+
+      expect(mockCreatePublicClientGetter).toHaveBeenCalled();
+      const adapterMock = vi.mocked(createViemAdapterFromProvider);
+      expect(adapterMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          getPublicClient: mockClientGetter,
+        })
+      );
     });
 
     it("does nothing if record not found in storage", async () => {

@@ -1,6 +1,8 @@
 import { USDC_DECIMALS, MAX_USDC_AMOUNT, DEFAULT_LOCALE } from "./constants";
-import { parseUnits, isAddress } from "viem";
-import type { EIP1193Provider } from "viem";
+import { parseUnits, isAddress, createPublicClient, http } from "viem";
+import type { Chain, PublicClient, EIP1193Provider } from "viem";
+import type { Config } from "wagmi";
+import { getPublicClient as getWagmiPublicClient } from "wagmi/actions";
 import type { BridgeChainConfig } from "./types";
 
 export { type EIP1193Provider } from "viem";
@@ -311,4 +313,29 @@ export function validateChainConfigs(
  */
 export function ensureHexPrefix(hex: string): `0x${string}` {
   return (hex.startsWith("0x") ? hex : `0x${hex}`) as `0x${string}`;
+}
+
+/**
+ * Create a `getPublicClient` callback for the Circle Bridge Kit adapter.
+ *
+ * Returns a function that resolves a viem `PublicClient` for a given chain
+ * by first trying the parent app's wagmi config (which has the user's custom
+ * RPC transports), then falling back to a default client using the chain's
+ * built-in public RPC.
+ *
+ * @param wagmiConfig - The wagmi config from `useConfig()`
+ */
+export function createPublicClientGetter(
+  wagmiConfig: Config,
+): (params: { chain: Chain }) => PublicClient {
+  return ({ chain }: { chain: Chain }): PublicClient => {
+    try {
+      const client = getWagmiPublicClient(wagmiConfig, { chainId: chain.id });
+      if (client) return client as PublicClient;
+    } catch {
+      // wagmi config doesn't have a transport for this chain
+    }
+    // Fallback: create a client using the chain's default RPC
+    return createPublicClient({ chain, transport: http() }) as PublicClient;
+  };
 }
